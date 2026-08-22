@@ -7,7 +7,7 @@ set -euo pipefail
 cd "$(dirname "$0")"
 VENV="$HOME/.xchat-mesh-node/venv/bin"   # has the deps xc_common needs
 for f in *.html; do
-  base64 "$f" > /tmp/xc_blob_in.txt
+  base64 < "$f" | tr -d '\n' > /tmp/xc_blob_in.txt
   "$VENV/python" ../xc_blobput.py
   echo "$f -> $(cat /tmp/xc_blobput_result.json)"
 done
