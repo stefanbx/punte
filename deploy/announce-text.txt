@@ -1,1 +1,1 @@
-ӾChat 2.5.10 is live — videos autoplay in the feed, new goofy & XNO profile avatars, scan or paste a Nano address in Send, untip by tapping Tip again, faster loading, and a video-post crash fix. Tap to update.
+ӾChat 2.5.11 is live — fixes the QR-address scanner (black camera on 2.5.10) so Send → Scan works. Tap to update.

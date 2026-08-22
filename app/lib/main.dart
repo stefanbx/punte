@@ -176,7 +176,11 @@ Future<void> resolveWorkBase() async {
 // seed. Set as soon as the seed is known (RootGate), used by the Api layer below.
 NanoWallet? gWallet;
 const String kGw = 'http://10.0.2.2:8080/ipfs/';
-const String kAppVersion = '2.5.10'; // this build; the update checker compares against the signed release.
+const String kAppVersion = '2.5.11'; // this build; the update checker compares against the signed release.
+// Supporter mode is HIDDEN until it does real work: a phone can't relay (NAT), so it just triggers the
+// node to gossip, and with only a couple of fully-synced relays there's nothing to backfill. Flip to true
+// once the relay set is large/laggy enough that a supporter's re-push actually fills a gap.
+const bool kSupporterEnabled = false;
 // 2.3.0: HARD signing-format break (issue #2) — domain-tagged, length-prefixed signature preimage
 // (see NanoWallet.sigCanon / node xc_common.sig_canon). Signatures from 2.2.x no longer verify, so
 // heads/comments/follows/profiles/polls/dm-keys must be re-published from this build onward.
@@ -3728,13 +3732,13 @@ class _FeedScreenState extends State<FeedScreen> with WidgetsBindingObserver {
     // would tell them they were paid for money that may never move (the tally can be dropped, or the
     // settle can fail). The creator is notified at SETTLE (see _settle / _maybeAutoSettle), when a real
     // Nano block actually lands.
+    // No "Undo" action here anymore: untip is now a toggle — tap Tip again on a still-pending post to
+    // remove it. A stale snackbar Undo (tapped after the toggle already untipped) only produced a
+    // confusing "too late to undo".
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        duration: const Duration(seconds: 4),
+        duration: const Duration(seconds: 3),
         backgroundColor: kCard,
-        content: Text('◈ +${fmtXno(amt)} XNO tallied off-chain — no network, no block'),
-        // Undo is safe HERE because a tip is only a pledge until it settles — and auto-settle is fired
-        // right after, so the window is exactly while it's still pending. `_untip` refuses once settled.
-        action: SnackBarAction(label: 'Undo', textColor: kAccent, onPressed: () => _untip(p, amt))));
+        content: Text('◈ +${fmtXno(amt)} XNO tallied off-chain — tap Tip again to undo')));
     _maybeAutoSettle(p.account, p.handle);
   }
 
@@ -7555,15 +7559,18 @@ class _FeedScreenState extends State<FeedScreen> with WidgetsBindingObserver {
                   ),
               ]),
             ),
-          // supporter mode
-          IconButton(
-            visualDensity: VisualDensity.compact,
-            constraints: const BoxConstraints(),
-            padding: const EdgeInsets.symmetric(horizontal: 6),
-            onPressed: _showSupporter,
-            icon: Icon(Icons.bolt,
-                size: 21, color: _supporterActive ? const Color(0xFF4DD0A7) : kText),
-          ),
+          // supporter mode — HIDDEN for now (kSupporterEnabled=false). A phone can't be a relay (NAT), so
+          // it only pokes the node to gossip; with today's 2 fully-synced relays there's nothing to
+          // backfill, so the contribution is nil. Re-enable when there are more/laggy relays to serve.
+          if (kSupporterEnabled)
+            IconButton(
+              visualDensity: VisualDensity.compact,
+              constraints: const BoxConstraints(),
+              padding: const EdgeInsets.symmetric(horizontal: 6),
+              onPressed: _showSupporter,
+              icon: Icon(Icons.bolt,
+                  size: 21, color: _supporterActive ? const Color(0xFF4DD0A7) : kText),
+            ),
           // moderation: cycle the reputation-weighted threshold (or off)
           Padding(
             padding: const EdgeInsets.only(right: 6),

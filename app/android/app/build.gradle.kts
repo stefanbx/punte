@@ -53,6 +53,13 @@ android {
     buildTypes {
         release {
             signingConfig = signingConfigs.getByName(if (hasReleaseKey) "release" else "debug")
+            // This Flutter forces isMinifyEnabled=true for release (see FlutterPlugin.kt), so R8 shrinks
+            // the app. ML Kit (mobile_scanner's QR reader) loads classes reflectively — without these
+            // rules R8 strips them and the scanner shows a black camera. Keep-rules live in proguard-rules.pro.
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro",
+            )
             // NOTE: a universal APK carries the native libs (libflutter.so + libapp.so) once PER ABI, so
             // the default build ships arm64-v8a + armeabi-v7a + x86_64. `ndk.abiFilters` here is IGNORED by
             // `flutter build apk` (Flutter injects -Ptarget-platform=all), so the distributed release MUST
