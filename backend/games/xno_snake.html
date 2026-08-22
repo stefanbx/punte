@@ -61,8 +61,12 @@
   const target = Math.max(0, (window.__target|0) || parseInt(new URLSearchParams(location.search).get('target')||'0',10)||0);
   if(target) tgtEl.textContent='🎯 Beat '+target;
   let cell,W,snake,dir,nextDir,food,score,best,timer,speed,dead,combo,comboT,parts,shake,pops,muted,ended;
-  best=+(localStorage.getItem('xnoSnakeBest')||0); bestEl.textContent=best;
-  muted=localStorage.getItem('xnoSnakeMute')==='1'; $('mute').textContent=muted?'🔇':'🔊';
+  // Storage-safe: a WebView loaded from an HTML string has an opaque (about:blank) origin, so
+  // touching localStorage throws a SecurityError — which would abort the whole script. Wrap it.
+  const LS={get:k=>{try{return localStorage.getItem(k);}catch(e){return null;}},
+            set:(k,v)=>{try{localStorage.setItem(k,v);}catch(e){}}};
+  best=+(LS.get('xnoSnakeBest')||0); bestEl.textContent=best;
+  muted=LS.get('xnoSnakeMute')==='1'; $('mute').textContent=muted?'🔇':'🔊';
 
   // --- tiny WebAudio blips (self-contained, no assets) ---
   let ac; function beep(f,d,t){ if(muted)return; try{ ac=ac||new (window.AudioContext||webkitAudioContext)();
@@ -152,7 +156,7 @@
   }
   function gameOver(won){
     if(ended)return; ended=true; dead=true; clearInterval(timer);
-    if(score>best){ best=score; localStorage.setItem('xnoSnakeBest',best); }
+    if(score>best){ best=score; LS.set('xnoSnakeBest',best); }
     bestEl.textContent=best; best2El.textContent=best; ateEl.textContent=snake.length-3>=0?score:score;
     ovh.textContent = won?'🏆 YOU WIN!':'GAME OVER'; ovh.className = won?'win':'';
     overEl.classList.add('show');
@@ -177,7 +181,7 @@
     b.addEventListener('touchstart',fire,{passive:false}); b.addEventListener('click',fire); });
   $('again').addEventListener('click',reset);
   overEl.addEventListener('click',e=>{ if(e.target===overEl)reset(); });
-  $('mute').addEventListener('click',()=>{ muted=!muted; localStorage.setItem('xnoSnakeMute',muted?'1':'0');
+  $('mute').addEventListener('click',()=>{ muted=!muted; LS.set('xnoSnakeMute',muted?'1':'0');
     $('mute').textContent=muted?'🔇':'🔊'; });
   addEventListener('resize',()=>{ fit(); if(!dead)draw(); });
   try{ document.body.tabIndex=0; window.focus(); document.body.focus(); }catch(e){}

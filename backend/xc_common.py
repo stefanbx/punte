@@ -320,6 +320,17 @@ def release_canon(m):
     return sig_canon('release', m.get('publisher', ''), m.get('version', ''), m.get('cid', ''),
                      m.get('sha256', ''), m.get('size', ''), m.get('changelog', ''))
 
+def games_dir_json(games):
+    # Canonical bytes for the games list, so the signer and every verifier hash the SAME string
+    # regardless of dict key order or whitespace. Sort keys, no spaces.
+    return json.dumps(games or [], sort_keys=True, separators=(',', ':'), ensure_ascii=False)
+
+def gamesdir_canon(m):
+    # A publisher-signed GAMES DIRECTORY: the list of self-contained mini-games (id/title/cid/…),
+    # signed like a release so it lives on the relays and updates WITHOUT a node redeploy.
+    return sig_canon('gamesdir', m.get('publisher', ''), games_dir_json(m.get('games', [])),
+                     str(m.get('ts', '')))
+
 def attest_canon(a):
     return sig_canon('attest', a.get('version', ''), a.get('commit', ''), a.get('sha256', ''),
                      a.get('attestor', ''), a.get('type', ''))

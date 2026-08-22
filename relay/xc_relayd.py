@@ -112,6 +112,8 @@ supporters = {}
 follows = {}                         # account -> signed follow-list record (portable follow graph)
 comments = {}                        # post_id -> list of signed comment events (off-chain replies)
 releases = {}                        # publisher account -> signed release record (self-update head)
+games_dir = {}                        # publisher account -> signed GAMES DIRECTORY record (updatable
+                                     # without a node redeploy: a new game = re-sign + re-push this)
 profiles = {}                        # account -> signed profile record (display name, bio, avatar/banner CIDs)
 dmkeys = {}                          # account -> signed X25519 DM public key record (E2E encryption)
 dms_by_to = {}                       # recipient acct -> [encrypted DM record, ...] in arrival order.
@@ -788,6 +790,34 @@ def accept_release(m):
     mark_dirty()
     return True
 
+def accept_gamesdir(m):
+    # Ingest a signed GAMES DIRECTORY record. Like a release, this names content the app will RUN
+    # (self-contained games in a WebView), so the relay VERIFIES the pinned publisher's signature at
+    # the door — a forged directory could point the app at a hostile game blob. We keep the NEWEST
+    # valid record per publisher (by ts); the game bytes themselves are content-addressed blobs.
+    if xc is None:
+        return False
+    pub_acc = m.get('publisher', '')
+    pub, sig = m.get('pub', ''), m.get('sig', '')
+    if pub_acc != PUBLISHER_ACCT:
+        return False
+    try:
+        signer = xc.pub_to_addr(pub)
+        gone, successor = revoked_publisher(signer)
+        if gone:
+            return False
+        allowed = (signer == PUBLISHER_ACCT) or bool(successor_of_pinned() == signer)
+        if not allowed or not xc.verify_msg(pub, xc.gamesdir_canon(m), sig):
+            return False
+    except Exception:
+        return False
+    cur = games_dir.get(pub_acc)
+    if cur and int(cur.get('ts', 0) or 0) > int(m.get('ts', 0) or 0):
+        return False                      # never regress to an older directory
+    games_dir[pub_acc] = m
+    mark_dirty()
+    return True
+
 def backfill():
     # SYNC ON JOIN. bootstrap() learns the peer list but pulls no content, so a freshly launched
     # relay used to come up blank and only accumulate what was pushed to it AFTER joining — it never
@@ -920,7 +950,7 @@ def blob_credit(cid, payhash):
 # (in-memory before this meant comments, uploaded media, likes, poll votes vanished on restart)
 _STATE_KEYS = ('engage', 'notifs', 'supporters', 'follows', 'comments',   # blobs now live in SQLite
                'releases', 'profiles', 'dmkeys', 'pollvotes', 'reports', 'pinned', 'pins_paid',
-               'tips_paid', 'revocations', 'scores')
+               'tips_paid', 'revocations', 'scores', 'games_dir')
 # DMs are persisted SEPARATELY (not via the generic loop above): on disk they stay a FLAT `dms` list in
 # arrival order — so an OLDER relay can still read a store this one writes — and load() re-buckets them.
 
@@ -1702,6 +1732,11 @@ class H(BaseHTTPRequestHandler):
                     for a, v in scores.get(game, {}).items()]
             rows.sort(key=lambda r: r['score'], reverse=True)
             self._send(200, json.dumps({'ok': True, 'scores': rows[:50]}))
+        elif self.path.startswith('/gamesdir'):
+            # The signed games directory for the pinned publisher (or all, if none pinned). The node
+            # (or app) re-verifies the signature; the newest valid one wins.
+            recs = [games_dir[PUBLISHER_ACCT]] if PUBLISHER_ACCT in games_dir else list(games_dir.values())
+            self._send(200, json.dumps({'ok': True, 'records': recs}))
         elif self.path.startswith('/engagement'):
             self._send(200, json.dumps({'relay': PORT, 'engage': engage}))
         elif self.path.startswith('/work'):
@@ -2049,6 +2084,16 @@ class H(BaseHTTPRequestHandler):
                     lo = min(board, key=lambda a: int(board[a].get('score', 0)))
                     board.pop(lo, None)
                 self._send(200, json.dumps({'ok': True, 'best': board.get(acc)}))
+            except Exception as ex:
+                self._send(400, json.dumps({'ok': False, 'error': str(ex)}))
+        elif self.path.startswith('/gamesdir'):
+            # A signed games DIRECTORY (the list of mini-games). VERIFIED against the pinned publisher —
+            # this names code the app runs, so a forged directory must not enter. Lets games be added or
+            # updated by re-signing + re-pushing this record, with NO node redeploy.
+            try:
+                m = json.loads(raw)
+                stored = accept_gamesdir(m)
+                self._send(200, json.dumps({'ok': True, 'accepted': stored}))
             except Exception as ex:
                 self._send(400, json.dumps({'ok': False, 'error': str(ex)}))
         elif self.path.startswith('/react'):

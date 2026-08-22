@@ -11,6 +11,10 @@ spec = importlib.util.spec_from_file_location("xc_common", os.path.join(os.path.
 xc = importlib.util.module_from_spec(spec); spec.loader.exec_module(xc)
 
 GAMES_FILE = os.path.join(os.path.dirname(__file__), 'games.json')
+# The publisher the app pins for signed content (releases AND the games directory) — same account, so a
+# stolen relay can't inject a hostile game. Overridable for a self-run network.
+PUBLISHER = os.environ.get('XC_PUBLISHER_ACCOUNT',
+                           'nano_3nefzmwosgqdo97pt6rzjiiazrgx5sf58eksbsbbhrmca7cg3fxisora1dp8')
 
 
 def discover_relays():
@@ -59,10 +63,40 @@ def leaderboard(game):
     ranked = sorted(best.values(), key=lambda r: int(r.get('score', 0)), reverse=True)
     return {"ok": True, "scores": ranked[:50]}
 
-# ---- directory (content-addressed games registered in backend/games.json) ---------------------------
-def directory():
+# ---- directory ---------------------------------------------------------------------------------------
+# The games directory lives on the RELAYS as a publisher-SIGNED record (xc_gamespub.py publishes it), so
+# a new or updated game is a re-sign + re-push — NEVER a node redeploy. We fetch every relay's copy, keep
+# the newest record that carries a VALID pinned-publisher signature, and return its games. backend/games.json
+# is only a local fallback for a cold network that has no signed record yet.
+def _verify_dir(rec):
     try:
+        if rec.get('publisher') != PUBLISHER:
+            return False
+        return xc.pub_to_addr(rec.get('pub', '')) == PUBLISHER and \
+            xc.verify_msg(rec.get('pub', ''), xc.gamesdir_canon(rec), rec.get('sig', ''))
+    except Exception:
+        return False
+
+def directory():
+    relays = discover_relays()
+    def _fetch(r):
+        try:
+            return json.loads(urllib.request.urlopen(r + '/gamesdir', timeout=4).read()).get('records', [])
+        except Exception:
+            return None
+    results = []
+    if relays:
+        with ThreadPoolExecutor(max_workers=min(16, len(relays))) as ex:
+            results = list(ex.map(_fetch, relays))
+    best = None
+    for recs in results:
+        for rec in (recs or []):
+            if _verify_dir(rec) and (best is None or int(rec.get('ts', 0) or 0) > int(best.get('ts', 0) or 0)):
+                best = rec
+    if best is not None:
+        return {"ok": True, "games": best.get('games', []), "signed": True}
+    try:                                              # cold-start fallback: local file, unsigned
         games = json.load(open(GAMES_FILE))
     except Exception:
         games = []
-    return {"ok": True, "games": games}
+    return {"ok": True, "games": games, "signed": False}
