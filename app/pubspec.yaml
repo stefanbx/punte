@@ -61,6 +61,7 @@ dependencies:
   flutter_local_notifications: ^18.0.1   # Android system notifications for likes/comments/tips/DMs
   app_badge_plus: ^1.2.2                  # unread-DM count on the launcher icon (AGP-8 safe)
   mobile_scanner: ^5.2.3
+  webview_flutter: ^4.14.1
 
 dev_dependencies:
   flutter_test:

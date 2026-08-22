@@ -56,6 +56,7 @@ if not RELAY_ACCT and os.environ.get('XC_DEV') == '1' and xc is not None:
     except Exception:
         RELAY_ACCT = ''
 engage = {}                                    # post_id -> {"likes": n, "tips_raw": int}
+scores = {}                                    # game_id -> {account -> {"score":int,"name":str,"avatar":str,"ts":int}} (MAX per account/game)
 # The pinned app-update publisher (public by nature). A joining relay backfills this publisher's
 # signed release records so it can serve updates immediately — the relay verifies nothing (clients do).
 # PUBLISHER REVOCATION (issue #10). The publisher key signs releases the app installs, so a leak is
@@ -919,7 +920,7 @@ def blob_credit(cid, payhash):
 # (in-memory before this meant comments, uploaded media, likes, poll votes vanished on restart)
 _STATE_KEYS = ('engage', 'notifs', 'supporters', 'follows', 'comments',   # blobs now live in SQLite
                'releases', 'profiles', 'dmkeys', 'pollvotes', 'reports', 'pinned', 'pins_paid',
-               'tips_paid', 'revocations')
+               'tips_paid', 'revocations', 'scores')
 # DMs are persisted SEPARATELY (not via the generic loop above): on disk they stay a FLAT `dms` list in
 # arrival order — so an OLDER relay can still read a store this one writes — and load() re-buckets them.
 
@@ -1692,6 +1693,15 @@ class H(BaseHTTPRequestHandler):
         elif self.path.startswith('/releases'):
             pub = qs(self.path).get('pub', '')
             self._send(200, json.dumps({'pub': pub, 'records': releases.get(pub, [])}))
+        elif self.path.startswith('/leaderboard'):
+            # Top scores for a game, DESC, top 50. The node merges across relays; each row is already
+            # a signature-verified best (see the /score handler), so the client can trust the ranking.
+            game = qs(self.path).get('game', '')
+            rows = [{'account': a, 'name': v.get('name', ''), 'avatar': v.get('avatar', ''),
+                     'score': int(v.get('score', 0)), 'ts': int(v.get('ts', 0))}
+                    for a, v in scores.get(game, {}).items()]
+            rows.sort(key=lambda r: r['score'], reverse=True)
+            self._send(200, json.dumps({'ok': True, 'scores': rows[:50]}))
         elif self.path.startswith('/engagement'):
             self._send(200, json.dumps({'relay': PORT, 'engage': engage}))
         elif self.path.startswith('/work'):
@@ -2014,6 +2024,31 @@ class H(BaseHTTPRequestHandler):
                 m = json.loads(raw); e = engage_for(m['post_id'])
                 e['likes'] = max(0, e.get('likes', 0) + int(m.get('delta', 1)))
                 self._send(200, json.dumps({'ok': True, 'likes': e['likes']}))
+            except Exception as ex:
+                self._send(400, json.dumps({'ok': False, 'error': str(ex)}))
+        elif self.path.startswith('/score'):
+            # A game score is SIGNED by the player's account, so a leaderboard rank can't be forged: the
+            # relay verifies pub↔account AND the signature over sig_canon('score', account, game, score, ts)
+            # before recording it. We keep the MAX score per account per game, and bound each game's board
+            # to the top 500 accounts. canon: score|account|game|score|ts.
+            try:
+                m = json.loads(raw)
+                game, acc = str(m.get('game', '')), m.get('account', '')
+                score, ts = int(m.get('score', 0)), int(m.get('ts', 0))
+                pub, sig = m.get('pub', ''), m.get('sig', '')
+                if not (game and acc and xc is not None and xc.pub_to_addr(pub) == acc
+                        and xc.verify_msg(pub, xc.sig_canon('score', acc, game, score, ts), sig)):
+                    self._send(400, json.dumps({'ok': False, 'error': 'bad signature'})); return
+                board = scores.setdefault(game, {})
+                _cap_dict(scores, ENGAGE_MAX)                  # bound distinct games (was unbounded → OOM)
+                cur = board.get(acc)
+                if cur is None or score > int(cur.get('score', 0)):
+                    board[acc] = {'score': score, 'name': str(m.get('name', ''))[:40],
+                                  'avatar': str(m.get('avatar', ''))[:200], 'ts': ts}
+                while len(board) > 500:                        # top-500 accounts per game; drop the lowest
+                    lo = min(board, key=lambda a: int(board[a].get('score', 0)))
+                    board.pop(lo, None)
+                self._send(200, json.dumps({'ok': True, 'best': board.get(acc)}))
             except Exception as ex:
                 self._send(400, json.dumps({'ok': False, 'error': str(ex)}))
         elif self.path.startswith('/react'):

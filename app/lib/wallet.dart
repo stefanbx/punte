@@ -142,6 +142,10 @@ class NanoWallet {
   /// caps) so it doesn't change the profile canon and old clients ignore it. Empty postId clears it.
   String pinMsg(int ts, String postId) => sigCanon('profilepin', [account, ts, postId]);
   String reshareMsg(String postId, int ts) => sigCanon('reshare', [account, postId, ts]);
+  /// A game leaderboard score, signed by the player so the relay binds name+avatar to a real account
+  /// (a player can still inflate their OWN score — a community board, not anti-cheat). Matches the
+  /// backend canon xc.sig_canon('score', account, game, int(score), int(ts)).
+  String scoreMsg(String game, int score, int ts) => sigCanon('score', [account, game, score, ts]);
 
   // ---- encrypted DMs (on-device): a SEPARATE X25519 keypair derived from the seed, sealing with
   // NaCl crypto_box (pinenacl) — byte-compatible with the node's PyNaCl. The relays only ever see

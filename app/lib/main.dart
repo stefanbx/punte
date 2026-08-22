@@ -31,6 +31,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:crypto/crypto.dart' show sha256;
 import 'package:url_launcher/url_launcher.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';   // QR scan → autofill a Nano address in Send
+import 'package:webview_flutter/webview_flutter.dart';  // render relay-fetched HTML mini-games
 import 'body.dart';
 import 'wallet.dart';
 import 'mesh.dart';
@@ -1764,6 +1765,49 @@ class Api {
       await http.post(Uri.parse('$kBase/api/react'),
           headers: {'Content-Type': 'application/json'},
           body: jsonEncode({'post_id': pid, 'emoji': emoji, 'delta': '$delta'}));
+    } catch (_) {}
+  }
+
+  // ---- GAMES: relay-fetched, self-contained HTML mini-games + a signed community leaderboard ----
+  // directory: [{id, title, cid, author, icon}] — the CID is a content-addressed blob, fetched below.
+  static Future<List<Map<String, dynamic>>> games() async {
+    try {
+      final r = await http.get(Uri.parse('$kBase/api/games')).timeout(const Duration(seconds: 12));
+      return (((jsonDecode(r.body))['games'] as List?) ?? const [])
+          .map((e) => Map<String, dynamic>.from(e as Map)).toList();
+    } catch (_) {
+      return const [];
+    }
+  }
+
+  // fetch a game's HTML by CID (the same content-addressed blob path media uses) — pinned to relays.
+  static Future<String?> gameHtml(String cid) async {
+    final b = await media(cid);
+    return b == null ? null : utf8.decode(b, allowMalformed: true);
+  }
+
+  static Future<List<Map<String, dynamic>>> leaderboard(String game) async {
+    try {
+      final r = await http.get(Uri.parse('$kBase/api/leaderboard?game=$game')).timeout(const Duration(seconds: 12));
+      return (((jsonDecode(r.body))['scores'] as List?) ?? const [])
+          .map((e) => Map<String, dynamic>.from(e as Map)).toList();
+    } catch (_) {
+      return const [];
+    }
+  }
+
+  // submit a score — SIGNED so the board binds name+avatar to a real account (self-inflatable; it's a
+  // community board, not anti-cheat). The relay keeps the max per account per game.
+  static Future<void> submitScore(String game, int score, String name, String avatar) async {
+    final w = gWallet;
+    if (w == null) return;
+    final ts = DateTime.now().millisecondsSinceEpoch ~/ 1000;
+    final s = w.signMsg(w.scoreMsg(game, score, ts));
+    try {
+      await http.post(Uri.parse('$kBase/api/score'),
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode({'game': game, 'account': w.account, 'name': name, 'avatar': avatar,
+                            'score': score, 'ts': ts, 'sig': s['sig'], 'pub': s['pub']}));
     } catch (_) {}
   }
   // A reshare earns a slice of every tip to the post, so it is SIGNED on-device (canon
@@ -4462,6 +4506,8 @@ class _FeedScreenState extends State<FeedScreen> with WidgetsBindingObserver {
         replyingToHandle: post.replyTo == null ? '' : (_postById(post.replyTo)?.handle ?? ''),
         onQuote: () => _quotePost(post),
         onOpenThread: () => _openThread(post),
+        // Accept a challenge: open the game seeded with the poster's score as the target to beat.
+        onPlayChallenge: (game, score) => _playChallenge(game, score),
         // A handle resolves to an account only here, where the feed's view of who is who lives.
         onTapHandle: (h) {
           final want = h.toLowerCase();
@@ -7393,13 +7439,47 @@ class _FeedScreenState extends State<FeedScreen> with WidgetsBindingObserver {
     );
   }
 
-  Future<void> _compose({Post? quotedPost, Post? replyToPost}) async {
+  // Open the Games hub. A challenge from inside a game pops back here and drops the player into the
+  // composer, pre-seeded with a "beat my score" callout the feed renders as a play button.
+  void _openGames() {
+    Navigator.push(context, MaterialPageRoute(builder: (_) => GamesScreen(
+      myAccount: _account, myHandle: _handle,
+      onChallenge: (game, score) {
+        Navigator.of(context).popUntil((r) => r.isFirst);   // back to the feed
+        final label = game == 'xnake' ? 'Ӿnake' : game;
+        _compose(initialText: 'I scored $score in $label — think you can beat me? 🎯 ⟦game:$game:$score⟧');
+      },
+    )));
+  }
+
+  // Accept a challenge from a feed post: resolve the game in the directory, open it with the target.
+  Future<void> _playChallenge(String game, int score) async {
+    final games = await Api.games();
+    final g = games.firstWhere((e) => '${e['id']}' == game, orElse: () => const {});
+    if (!mounted) return;
+    if (g.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('That game isn\'t available right now')));
+      return;
+    }
+    Navigator.push(context, MaterialPageRoute(builder: (_) => GamePlayer(
+      game: Map<String, dynamic>.from(g), target: score,
+      myAccount: _account, myHandle: _handle,
+      onChallenge: (gg, ss) {
+        Navigator.of(context).popUntil((r) => r.isFirst);
+        final label = gg == 'xnake' ? 'Ӿnake' : gg;
+        _compose(initialText: 'I scored $ss in $label — think you can beat me? 🎯 ⟦game:$gg:$ss⟧');
+      },
+    )));
+  }
+
+  Future<void> _compose({Post? quotedPost, Post? replyToPost, String initialText = ''}) async {
     final res = await showModalBottomSheet<ComposeResult>(
       context: context,
       isScrollControlled: true,
       backgroundColor: kBg,
       builder: (_) => ComposeSheet(handle: _handle, account: _account, quotedPost: quotedPost,
-          replyToPost: replyToPost, channels: _myChannels, people: _knownHandles()),
+          replyToPost: replyToPost, channels: _myChannels, people: _knownHandles(), initialText: initialText),
     );
     if (res == null || res.segments.isEmpty) return;
     // Build the compose intent. The head signs a node-assigned CID+seq that only exist after the node
@@ -7559,6 +7639,15 @@ class _FeedScreenState extends State<FeedScreen> with WidgetsBindingObserver {
                   ),
               ]),
             ),
+          // games — relay-fetched mini-games + a signed leaderboard. Replaces the (hidden) supporter bolt.
+          IconButton(
+            visualDensity: VisualDensity.compact,
+            constraints: const BoxConstraints(),
+            padding: const EdgeInsets.symmetric(horizontal: 6),
+            tooltip: 'Games',
+            onPressed: _openGames,
+            icon: const Icon(Icons.sports_esports, size: 21, color: kText),
+          ),
           // supporter mode — HIDDEN for now (kSupporterEnabled=false). A phone can't be a relay (NAT), so
           // it only pokes the node to gossip; with today's 2 fully-synced relays there's nothing to
           // backfill, so the contribution is nil. Re-enable when there are more/laggy relays to serve.
@@ -10410,6 +10499,9 @@ class PostCard extends StatefulWidget {
   /// maps to an account only in the feed's view of the network — so it reports and lets the caller act.
   final void Function(String handle)? onTapHandle;
   final void Function(String tag)? onTapTag;
+  /// A challenge post carries a game+score marker → the card shows a Play button that reports here;
+  /// the feed opens the game player with the target (the card doesn't know the player's identity).
+  final void Function(String game, int score)? onPlayChallenge;
   final bool muted, blocked, bookmarked;
   final Post? quoted; // resolved quoted post (for a quote-post), rendered inline
   final bool inThread; // part of an author thread → show a thread affordance
@@ -10439,6 +10531,7 @@ class PostCard extends StatefulWidget {
       this.onOpenThread,
       this.onTapHandle,
       this.onTapTag,
+      this.onPlayChallenge,
       this.onMute,
       this.onBlock,
       this.onBookmark,
@@ -10656,6 +10749,342 @@ class _QRScanScreenState extends State<QRScanScreen> {
   }
 }
 
+// ─────────────────────────── GAMES ───────────────────────────
+// Self-contained HTML mini-games are NOT baked into the app: the directory (/api/games) names a
+// content-addressed CID per game, the bytes are fetched from relays (Api.gameHtml) and run in a
+// sandboxed WebView. Scores are signed on-device and posted to a community leaderboard. A challenge
+// is just a normal post carrying a ⟦game:id:score⟧ marker the feed renders as a "beat it" button.
+
+// The play-challenge marker embedded in a challenge post. Kept terse so it survives the composer and
+// is cheap to strip before display.
+final RegExp kGameChallengeRe = RegExp(r'⟦game:([a-z0-9_]+):(\d+)⟧');
+
+class GamesScreen extends StatefulWidget {
+  final String myAccount, myHandle;
+  final void Function(String game, int score)? onChallenge;
+  const GamesScreen({super.key, required this.myAccount, required this.myHandle, this.onChallenge});
+  @override
+  State<GamesScreen> createState() => _GamesScreenState();
+}
+
+class _GamesScreenState extends State<GamesScreen> {
+  List<Map<String, dynamic>> _games = const [];
+  bool _loading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    ProfileCache.I.ensure(widget.myAccount);   // so a fresh score carries my name+avatar
+    _load();
+  }
+
+  Future<void> _load() async {
+    final g = await Api.games();
+    if (mounted) setState(() { _games = g; _loading = false; });
+  }
+
+  void _play(Map<String, dynamic> g, {int target = 0}) {
+    Navigator.push(context, MaterialPageRoute(builder: (_) => GamePlayer(
+      game: g, target: target, myAccount: widget.myAccount, myHandle: widget.myHandle,
+      onChallenge: widget.onChallenge)));
+  }
+
+  void _board(Map<String, dynamic> g) {
+    Navigator.push(context, MaterialPageRoute(builder: (_) => LeaderboardScreen(
+      game: g, myAccount: widget.myAccount, myHandle: widget.myHandle)));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: kBg,
+      appBar: AppBar(
+        backgroundColor: kBg,
+        iconTheme: const IconThemeData(color: kText),
+        title: const Text('Games', style: TextStyle(color: kText, fontWeight: FontWeight.w800)),
+      ),
+      body: _loading
+          ? const Center(child: CircularProgressIndicator(color: kAccent))
+          : _games.isEmpty
+              ? Center(child: Text('No games yet', style: TextStyle(color: kDim, fontSize: 15)))
+              : RefreshIndicator(
+                  color: kAccent, backgroundColor: kCard,
+                  onRefresh: _load,
+                  child: ListView.separated(
+                    physics: const AlwaysScrollableScrollPhysics(),
+                    padding: const EdgeInsets.all(12),
+                    itemCount: _games.length,
+                    separatorBuilder: (_, __) => const SizedBox(height: 10),
+                    itemBuilder: (_, i) => _card(_games[i]),
+                  ),
+                ),
+    );
+  }
+
+  Widget _card(Map<String, dynamic> g) {
+    final title = '${g['title'] ?? g['id'] ?? 'Game'}';
+    final author = '${g['author'] ?? ''}';
+    final icon = '${g['icon'] ?? '🎮'}';
+    return Container(
+      decoration: BoxDecoration(
+        color: kCard,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: kAccent.withOpacity(0.18)),
+      ),
+      padding: const EdgeInsets.all(14),
+      child: Row(children: [
+        Container(
+          width: 52, height: 52, alignment: Alignment.center,
+          decoration: BoxDecoration(
+            color: kAccent.withOpacity(0.12), borderRadius: BorderRadius.circular(13)),
+          child: Text(icon, style: const TextStyle(fontSize: 26)),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text(title, style: const TextStyle(color: kText, fontWeight: FontWeight.w800, fontSize: 16)),
+            if (author.isNotEmpty)
+              Padding(padding: const EdgeInsets.only(top: 2),
+                child: Text('by $author', style: const TextStyle(color: kDim, fontSize: 12.5))),
+          ]),
+        ),
+        IconButton(
+          onPressed: () => _board(g),
+          icon: const Icon(Icons.leaderboard, color: kDim, size: 22),
+          tooltip: 'Leaderboard',
+        ),
+        const SizedBox(width: 2),
+        ElevatedButton(
+          onPressed: () => _play(g),
+          style: ElevatedButton.styleFrom(
+            backgroundColor: kAccent, foregroundColor: Colors.black,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+            padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 10)),
+          child: const Text('Play', style: TextStyle(fontWeight: FontWeight.w800)),
+        ),
+      ]),
+    );
+  }
+}
+
+// A single game running in a sandboxed WebView. The HTML is fetched by CID from relays and injected;
+// a `XCScore` JS channel receives the game-over score, which we sign + submit and then celebrate.
+class GamePlayer extends StatefulWidget {
+  final Map<String, dynamic> game;
+  final int target;   // >0 = a challenge: beat this score
+  final String myAccount, myHandle;
+  final void Function(String game, int score)? onChallenge;
+  const GamePlayer({super.key, required this.game, this.target = 0,
+    required this.myAccount, required this.myHandle, this.onChallenge});
+  @override
+  State<GamePlayer> createState() => _GamePlayerState();
+}
+
+class _GamePlayerState extends State<GamePlayer> {
+  WebViewController? _c;
+  bool _loading = true;
+  String? _err;
+
+  String get _gid => '${widget.game['id'] ?? ''}';
+
+  @override
+  void initState() {
+    super.initState();
+    ProfileCache.I.ensure(widget.myAccount);
+    _load();
+  }
+
+  Future<void> _load() async {
+    final cid = '${widget.game['cid'] ?? ''}';
+    final html = cid.isEmpty ? null : await Api.gameHtml(cid);
+    if (!mounted) return;
+    if (html == null) { setState(() { _err = 'Could not load this game from the relays.'; _loading = false; }); return; }
+    // A challenge injects the target the game reads as window.__target (falls back to a URL param).
+    final injected = widget.target > 0
+        ? html.replaceFirst('</head>', '<script>window.__target=${widget.target};</script></head>')
+        : html;
+    final c = WebViewController()
+      ..setJavaScriptMode(JavaScriptMode.unrestricted)
+      ..setBackgroundColor(kBg)
+      ..addJavaScriptChannel('XCScore', onMessageReceived: (m) => _onScore(m.message))
+      ..loadHtmlString(injected);
+    setState(() { _c = c; _loading = false; });
+  }
+
+  void _onScore(String raw) {
+    int score = 0;
+    bool beat = false;
+    try {
+      final d = jsonDecode(raw) as Map<String, dynamic>;
+      score = (d['score'] as num?)?.toInt() ?? 0;
+      beat = d['beat'] == true;
+    } catch (_) { return; }
+    if (score <= 0) return;
+    final name = ProfileCache.I.displayName(widget.myAccount, widget.myHandle);
+    final avatar = ProfileCache.I.avatarCid(widget.myAccount) ?? '';
+    Api.submitScore(_gid, score, name, avatar);   // fire-and-forget; the board keeps the max
+    _showResult(score, beat);
+  }
+
+  void _showResult(int score, bool beat) {
+    final title = '${widget.game['title'] ?? _gid}';
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: kCard,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      builder: (sheetCtx) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 18, 20, 20),
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            Text(beat ? '🏆 You beat the challenge!' : 'Game over',
+                style: TextStyle(color: beat ? const Color(0xFF4DD0A7) : kText,
+                    fontSize: 18, fontWeight: FontWeight.w800)),
+            const SizedBox(height: 6),
+            Text('$score', style: const TextStyle(color: kAccent, fontSize: 44, fontWeight: FontWeight.w900)),
+            if (widget.target > 0)
+              Text('target was ${widget.target}', style: const TextStyle(color: kDim, fontSize: 12.5)),
+            const SizedBox(height: 16),
+            Row(children: [
+              Expanded(child: OutlinedButton.icon(
+                onPressed: () {
+                  Navigator.pop(sheetCtx);
+                  Navigator.push(context, MaterialPageRoute(builder: (_) => LeaderboardScreen(
+                    game: widget.game, myAccount: widget.myAccount, myHandle: widget.myHandle)));
+                },
+                icon: const Icon(Icons.leaderboard, size: 18, color: kText),
+                label: const Text('Leaderboard', style: TextStyle(color: kText)),
+                style: OutlinedButton.styleFrom(
+                  side: BorderSide(color: kDim.withOpacity(0.5)),
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24))),
+              )),
+              const SizedBox(width: 10),
+              Expanded(child: ElevatedButton.icon(
+                onPressed: widget.onChallenge == null ? null : () {
+                  Navigator.pop(sheetCtx);           // close the sheet
+                  Navigator.pop(context);            // close the player
+                  widget.onChallenge!(_gid, score);  // feed opens the composer with the challenge text
+                },
+                icon: const Icon(Icons.emoji_events, size: 18),
+                label: Text('Challenge · $title', overflow: TextOverflow.ellipsis),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: kAccent, foregroundColor: Colors.black,
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24))),
+              )),
+            ]),
+            const SizedBox(height: 8),
+            TextButton(
+              onPressed: () { Navigator.pop(sheetCtx); _c?.reload(); },
+              child: const Text('Play again', style: TextStyle(color: kDim)),
+            ),
+          ]),
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: kBg,
+      appBar: AppBar(
+        backgroundColor: kBg,
+        iconTheme: const IconThemeData(color: kText),
+        title: Text('${widget.game['title'] ?? 'Game'}',
+            style: const TextStyle(color: kText, fontWeight: FontWeight.w800)),
+        actions: [
+          if (widget.target > 0)
+            Padding(padding: const EdgeInsets.only(right: 12),
+              child: Center(child: Text('🎯 ${widget.target}',
+                  style: const TextStyle(color: kAccent, fontWeight: FontWeight.w800, fontSize: 15)))),
+        ],
+      ),
+      body: _err != null
+          ? Center(child: Padding(padding: const EdgeInsets.all(24),
+              child: Text(_err!, textAlign: TextAlign.center, style: const TextStyle(color: kDim, fontSize: 15))))
+          : (_loading || _c == null)
+              ? const Center(child: CircularProgressIndicator(color: kAccent))
+              : WebViewWidget(controller: _c!),
+    );
+  }
+}
+
+class LeaderboardScreen extends StatefulWidget {
+  final Map<String, dynamic> game;
+  final String myAccount, myHandle;
+  const LeaderboardScreen({super.key, required this.game, required this.myAccount, required this.myHandle});
+  @override
+  State<LeaderboardScreen> createState() => _LeaderboardScreenState();
+}
+
+class _LeaderboardScreenState extends State<LeaderboardScreen> {
+  List<Map<String, dynamic>> _rows = const [];
+  bool _loading = true;
+
+  @override
+  void initState() { super.initState(); _load(); }
+
+  Future<void> _load() async {
+    final r = await Api.leaderboard('${widget.game['id'] ?? ''}');
+    if (mounted) setState(() { _rows = r; _loading = false; });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: kBg,
+      appBar: AppBar(
+        backgroundColor: kBg,
+        iconTheme: const IconThemeData(color: kText),
+        title: Text('${widget.game['title'] ?? 'Game'} · Top',
+            style: const TextStyle(color: kText, fontWeight: FontWeight.w800)),
+      ),
+      body: _loading
+          ? const Center(child: CircularProgressIndicator(color: kAccent))
+          : _rows.isEmpty
+              ? Center(child: Text('No scores yet — be the first', style: TextStyle(color: kDim, fontSize: 15)))
+              : RefreshIndicator(
+                  color: kAccent, backgroundColor: kCard,
+                  onRefresh: _load,
+                  child: ListView.separated(
+                    physics: const AlwaysScrollableScrollPhysics(),
+                    padding: const EdgeInsets.symmetric(vertical: 8),
+                    itemCount: _rows.length,
+                    separatorBuilder: (_, __) => Divider(height: 1, color: kDim.withOpacity(0.12)),
+                    itemBuilder: (_, i) => _row(i, _rows[i]),
+                  ),
+                ),
+    );
+  }
+
+  Widget _row(int i, Map<String, dynamic> r) {
+    final rank = i + 1;
+    final acct = '${r['account'] ?? ''}';
+    final name = '${r['name'] ?? ''}'.isNotEmpty ? '${r['name']}' : (acct.isNotEmpty ? '${acct.substring(0, 10)}…' : 'anon');
+    final score = (r['score'] as num?)?.toInt() ?? 0;
+    final me = acct == widget.myAccount;
+    final medal = rank == 1 ? '🥇' : rank == 2 ? '🥈' : rank == 3 ? '🥉' : '$rank';
+    return Container(
+      color: me ? kAccent.withOpacity(0.08) : null,
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+      child: Row(children: [
+        SizedBox(width: 32, child: Text(medal,
+            textAlign: TextAlign.center,
+            style: TextStyle(color: rank <= 3 ? kText : kDim, fontSize: rank <= 3 ? 20 : 15, fontWeight: FontWeight.w800))),
+        const SizedBox(width: 8),
+        AuthorAvatar(account: acct, handle: name, radius: 18),
+        const SizedBox(width: 10),
+        Expanded(child: Text(me ? '$name (you)' : name,
+            maxLines: 1, overflow: TextOverflow.ellipsis,
+            style: TextStyle(color: kText, fontSize: 15, fontWeight: me ? FontWeight.w800 : FontWeight.w600))),
+        Text('$score', style: const TextStyle(color: kAccent, fontSize: 17, fontWeight: FontWeight.w900)),
+      ]),
+    );
+  }
+}
+
 /// The card under a post that shows what its link actually leads to.
 ///
 /// The NODE fetches the page, not this phone. If each reader unfurled for themselves, every host
@@ -10850,7 +11279,10 @@ class _PostCardState extends State<PostCard> {
   Widget build(BuildContext context) {
     final p = widget.post;
     final e = widget.engage;
-    final longText = p.text.length > 220;
+    // A challenge post embeds a ⟦game:id:score⟧ marker; render a Play button and hide the marker.
+    final chMatch = kGameChallengeRe.firstMatch(p.text);
+    final chBody = chMatch == null ? p.text : p.text.replaceAll(kGameChallengeRe, '').trim();
+    final longText = chBody.length > 220;
     return Container(
       color: kBg,
       padding: const EdgeInsets.fromLTRB(14, 14, 14, 6),
@@ -10957,20 +11389,39 @@ class _PostCardState extends State<PostCard> {
               child: p.kind == 'article'
                   // Articles show a CLEAN excerpt under the title — never the raw HTML/markdown source.
                   // The formatted body is one tap away in the reader.
-                  ? Text(articleExcerpt(p.text),
+                  ? Text(articleExcerpt(chBody),
                       maxLines: 3,
                       overflow: TextOverflow.ellipsis,
                       style: const TextStyle(color: kDim, fontSize: 14.5, height: 1.4))
                   : (longText && !_expanded)
                       // Collapsed: plain Text, because maxLines+ellipsis belongs to Text and a truncated
                       // tappable span offers links whose end the reader cannot see.
-                      ? Text(p.text,
+                      ? Text(chBody,
                           maxLines: 6,
                           overflow: TextOverflow.ellipsis,
                           style: const TextStyle(color: kText, fontSize: 15, height: 1.35))
-                      : _richBody(p.text,
+                      : _richBody(chBody,
                           const TextStyle(color: kText, fontSize: 15, height: 1.35)),
             ),
+            // A challenge post: a bold Play button that opens the game seeded to beat this score.
+            if (chMatch != null && widget.onPlayChallenge != null)
+              Padding(
+                padding: const EdgeInsets.only(top: 10),
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: ElevatedButton.icon(
+                    onPressed: () => widget.onPlayChallenge!(
+                        chMatch.group(1)!, int.tryParse(chMatch.group(2)!) ?? 0),
+                    icon: const Icon(Icons.sports_esports, size: 18),
+                    label: Text('Play · beat ${chMatch.group(2)}'),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: kAccent, foregroundColor: Colors.black,
+                      padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+                      textStyle: const TextStyle(fontWeight: FontWeight.w800)),
+                  ),
+                ),
+              ),
             // "Show more" EXPANDS the text in place. It used to open the thread instead, on the reasoning
             // that an inline expand would fight the open-thread tap on the body. It doesn't — the body
             // still opens the thread, and this is a separate target. What the old behaviour actually did
@@ -13243,7 +13694,8 @@ class ComposeSheet extends StatefulWidget {
   final Post? replyToPost; // when set, this post is an X-style reply threaded under that post
   final List<String> channels; // the author's channels — an article can be published under one
   final Map<String, String> people; // account -> handle, for @-mention autocomplete (feed-seen accounts)
-  const ComposeSheet({super.key, required this.handle, required this.account, this.quotedPost, this.replyToPost, this.channels = const [], this.people = const {}});
+  final String initialText; // pre-seed the first body field (e.g. a game challenge callout)
+  const ComposeSheet({super.key, required this.handle, required this.account, this.quotedPost, this.replyToPost, this.channels = const [], this.people = const {}, this.initialText = ''});
   @override
   State<ComposeSheet> createState() => _ComposeSheetState();
 }
@@ -13453,6 +13905,7 @@ class _ComposeSheetState extends State<ComposeSheet> {
     for (final acc in widget.people.keys) {
       ProfileCache.I.ensure(acc);
     }
+    if (widget.initialText.isNotEmpty) _cs[0].text = widget.initialText;
   }
 
   @override

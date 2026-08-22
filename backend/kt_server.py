@@ -26,6 +26,7 @@ DM_PY = os.environ.get('XC_DM_PYTHON', PY)                  # kept as an overrid
 sys.path.insert(0, HERE)
 import xc_common as xc                                       # for api_me + wallet paths
 import xc_engage                                             # hot engagement path, called IN-PROCESS (no spawn)
+import xc_games                                              # signed game leaderboards + directory, IN-PROCESS
 import xc_unfurl                                             # link previews — network+parse, no seed, no /tmp
 
 # Human landing / download page, served on the node's PUBLIC url (/, /download, /get, /app). The node
@@ -844,6 +845,13 @@ def route(path, query, body):
         return json.dumps(xc_engage.tip(b('post_id'), b('raw'), b('payhash'), b('cid')))
     if path.startswith('/api/view'):         return json.dumps(xc_engage.view(b('post_id'), b('delta')))
     if path.startswith('/api/engagement'):   return json.dumps(xc_engage.get())
+    # GAMES: signed high-score leaderboards + a content-addressed game directory. /api/score fans the
+    # app-signed record out to every relay (which verifies the signature); /api/leaderboard aggregates
+    # (max per account) across relays; /api/games serves the local directory. /api/score sits before any
+    # other /api/s... route so it can't be swallowed by a prefix.
+    if path.startswith('/api/score'):        return json.dumps(xc_games.submit(body))   # body = app-signed score rec
+    if path.startswith('/api/leaderboard'):  return json.dumps(xc_games.leaderboard(q('game')))
+    if path.startswith('/api/games'):        return json.dumps(xc_games.directory())
     if path.startswith('/api/notify_push'):
         return json.dumps(xc_engage.notify({'to': b('to'), 'from': b('from'), 'kind': b('kind'),
                                             'text': b('text'), 'ts': int(time.time())}))
