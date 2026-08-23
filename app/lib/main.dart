@@ -36,6 +36,7 @@ import 'body.dart';
 import 'wallet.dart';
 import 'mesh.dart';
 import 'ledger_discovery.dart';
+import 'anchored_recovery.dart'; // A2 recovery screen — only reachable behind kAnchoredEnabled
 
 // The engine/relay endpoint. Default: the Android emulator reaches the host loopback at
 // 10.0.2.2. Runtime-configurable (Settings → Connection) so the app can point at a hosted
@@ -6148,6 +6149,18 @@ class _FeedScreenState extends State<FeedScreen> with WidgetsBindingObserver {
                 _showUpdates();
               },
             ),
+            if (kAnchoredEnabled)
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: const Icon(Icons.verified_user_outlined, color: kText, size: 20),
+                title: const Text('Account recovery', style: TextStyle(color: kText, fontWeight: FontWeight.w700, fontSize: 15)),
+                subtitle: const Text('recoverable identity · rotate a compromised key', style: TextStyle(color: kDim, fontSize: 12)),
+                trailing: const Icon(Icons.chevron_right, color: kDim),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  Navigator.push(context, MaterialPageRoute(builder: (_) => const AnchoredRecoveryScreen()));
+                },
+              ),
             const SizedBox(height: 6),
             if (!reveal)
               OutlinedButton.icon(

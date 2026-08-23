@@ -266,6 +266,65 @@ Map<String, dynamic> makeLease(String label, NanoWallet root, int ts) {
   return {...l, 'sig': s['sig'], 'pub': s['pub']};
 }
 
+// ───────────────────────────── PART A-net: read/publish an anchor log over the relays ─────────────
+// The signer above BUILDS events; these two put them on (and pull them off) the live relays. GET is a
+// plain read; POST is `{"log":[...]}`, which the relay chain-verifies at the door (accept_anchor) before
+// storing — a forged log is rejected there as well as here, and newest-valid-longest wins.
+
+/// GET `/anchor?id=<anchor>` from the first relay that answers, returning the (possibly empty) event log.
+/// Does NOT verify the chain — call [verifyLog] on the result to trust it.
+Future<List<Map<String, dynamic>>> fetchAnchorLog(
+  String anchor, {
+  http.Client? client,
+  List<String> relays = kAnchorRelays,
+}) async {
+  final c = client ?? http.Client();
+  final ownClient = client == null;
+  try {
+    final resp = await _getJson(c, relays, '/anchor?id=${Uri.encodeQueryComponent(anchor)}');
+    final raw = resp['log'];
+    if (raw is! List) return <Map<String, dynamic>>[];
+    return raw.map((e) => (e as Map).cast<String, dynamic>()).toList();
+  } finally {
+    if (ownClient) c.close();
+  }
+}
+
+/// POST {"log":[events]} to every relay (primary + fallback) so the log lands on both. Succeeds if AT
+/// LEAST ONE relay stored it; throws AnchorError only when they all reject/fail. The relay re-verifies
+/// the chain, so a relay 400 here means the events themselves were rejected — surfaced in the message.
+Future<void> publishAnchorLog(
+  List<Map<String, dynamic>> events, {
+  http.Client? client,
+  List<String> relays = kAnchorRelays,
+}) async {
+  final c = client ?? http.Client();
+  final ownClient = client == null;
+  final body = jsonEncode({'log': events});
+  Object? lastErr;
+  var stored = false;
+  try {
+    for (final base in relays) {
+      try {
+        final r = await c
+            .post(Uri.parse('$base/anchor'),
+                headers: {'content-type': 'application/json'}, body: body)
+            .timeout(const Duration(seconds: 15));
+        if (r.statusCode ~/ 100 == 2) {
+          stored = true;
+        } else {
+          lastErr = AnchorError('$base/anchor -> HTTP ${r.statusCode}: ${r.body}');
+        }
+      } catch (e) {
+        lastErr = e;
+      }
+    }
+  } finally {
+    if (ownClient) c.close();
+  }
+  if (!stored) throw AnchorError('publish rejected by all relays: $lastErr');
+}
+
 // ───────────────────────────── PART B resolver: verify a name end to end ─────────────────────────
 
 /// Validate a whole anchor event log (anchor.py resolve) and return the tip event. Throws AnchorError on
