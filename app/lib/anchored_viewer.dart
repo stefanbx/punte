@@ -26,9 +26,10 @@ import 'package:webview_flutter/webview_flutter.dart';
 import 'anchor.dart';
 import 'main.dart' show kBg, kCard, kLine, kText, kDim, kAccent;
 
-/// The hosted Keel content runtime (B2). 10.0.2.2 = the host machine's localhost from the Android
-/// emulator; a real device/prod points at the deployed content host.
-const String kAnchorContentHost = 'http://10.0.2.2:8799';
+/// The hosted Keel content runtime (B2): fetches the client-VERIFIED bytes, runs them sandboxed and
+/// renders zero-JS. Deployed as an isolated Fly app over HTTPS. For local host development, point this
+/// at 'http://10.0.2.2:8799' (the host machine's localhost from the Android emulator).
+const String kAnchorContentHost = 'https://xchat-content-host.fly.dev';
 
 /// The names published to the runtime — offered as one-tap buttons so the demo path needs no typing.
 const List<String> kAnchorDemoNames = ['counter', 'greeter'];
