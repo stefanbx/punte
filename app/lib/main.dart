@@ -182,6 +182,10 @@ const String kAppVersion = '2.5.11'; // this build; the update checker compares 
 // node to gossip, and with only a couple of fully-synced relays there's nothing to backfill. Flip to true
 // once the relay set is large/laggy enough that a supporter's re-push actually fills a gap.
 const bool kSupporterEnabled = false;
+// Anchored naming (recovery + verified anchored-content viewer) — SHIPPED HIDDEN behind this flag,
+// exactly like supporter/games. With it false, none of the new surface or behaviour is reachable and
+// the app is byte-for-byte its current self. Flip to true only once the branch is reviewed.
+const bool kAnchoredEnabled = false;
 // 2.3.0: HARD signing-format break (issue #2) — domain-tagged, length-prefixed signature preimage
 // (see NanoWallet.sigCanon / node xc_common.sig_canon). Signatures from 2.2.x no longer verify, so
 // heads/comments/follows/profiles/polls/dm-keys must be re-published from this build onward.
