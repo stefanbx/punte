@@ -335,6 +335,28 @@ def attest_canon(a):
     return sig_canon('attest', a.get('version', ''), a.get('commit', ''), a.get('sha256', ''),
                      a.get('attestor', ''), a.get('type', ''))
 
+# ---- ANCHOR primitive canons (self-sovereign name/key logs; see anchor/anchor.py) --------------
+# Defined here so the RELAY can verify anchor event chains and name leases at the door — the same
+# reason the relay-verified types above live here — without importing the anchor package (a
+# separate, node-side reference). The bytes MUST match anchor.py / gateway.py exactly, or a signature
+# produced by the anchor tools would be rejected by the relay.
+
+def lease_canon(m):
+    # A LEASE binds a human LABEL to an ANCHOR and is authorised by the anchor's ROOT key
+    # (pub_to_addr(pub) == anchor). Mirrors gateway.py::_lease_canon. str(ts) is a no-op for the
+    # int/str ts the tools emit (sig_canon coerces anyway) but pins the preimage explicitly.
+    return sig_canon('anchor-lease', m.get('label', ''), m.get('anchor', ''), str(m.get('ts', '')))
+
+def anchor_evt_canon(e):
+    # The canonical signing preimage for ONE anchor event. Byte-for-byte identical to
+    # anchor.py::_canon: type 'anchor-evt', fields anchor, str(seq), prev, authority, op_key, next,
+    # canonical-JSON(endpoints) ("{}" when empty), str(ts). endpoints is sorted / space-free so the
+    # signer and every verifier hash the same bytes regardless of dict key order.
+    return sig_canon('anchor-evt', e.get('anchor', ''), str(e.get('seq', '')), e.get('prev', ''),
+                     e.get('authority', ''), e.get('op_key', ''), e.get('next', ''),
+                     json.dumps(e.get('endpoints') or {}, sort_keys=True, separators=(',', ':')),
+                     str(e.get('ts', '')))
+
 # Legacy preimages, kept only so step 1 can still accept signatures made before step 2.
 def report_canon_legacy(acc, pid, ts):
     return 'report|%s|%s|%s' % (acc, pid, ts)

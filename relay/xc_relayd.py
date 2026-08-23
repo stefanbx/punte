@@ -129,6 +129,10 @@ _dm_order = deque()                  # record refs in global ARRIVAL order — d
 pollvotes = {}                       # poll_id -> {account: signed vote record} (one vote per account)
 reports = {}                         # post_id -> {account: signed report} (community moderation signal)
 tips_paid = {}                       # tip payhash -> cid, so one on-chain payment credits value once
+# ANCHOR primitive (self-sovereign name/key logs; see anchor/anchor.py + gateway.py). VERIFIED at the
+# door like /release and /gamesdir — a stored event log or lease is only ever a valid one.
+anchors = {}                         # anchor_id (nano_ root address) -> [signed event log], chain-verified
+leases  = {}                         # label -> winning signed lease; FIRST valid claim per label wins
 known = {SELF}                       # relays this relay knows about (flat URL set — the legacy wire format)
 # A relay's IDENTITY is its own keypair, not its URL. A relay behind a Cloudflare quick tunnel gets a
 # brand-new hostname on every restart, and a URL-keyed peer set treats each one as a new relay: the
@@ -245,6 +249,9 @@ RELEASE_PUBS_MAX = int(os.environ.get('XC_RELEASE_PUBS_MAX', '8'))   # distinct 
 # So pin the bytes for only the newest N releases per publisher; older RECORDS (metadata/signatures)
 # are still kept and served, their bytes fetched from IPFS/peers on demand. 0 disables the trimming.
 RELEASE_PIN_KEEP = int(os.environ.get('XC_RELEASE_PIN_KEEP', '3'))   # newest releases whose bytes stay pinned
+ANCHORS_MAX      = int(os.environ.get('XC_ANCHORS_MAX', '50000'))    # distinct anchors stored (backstop)
+ANCHOR_LOG_MAX   = int(os.environ.get('XC_ANCHOR_LOG_MAX', '1024'))  # events per anchor log (rotation depth)
+LEASES_MAX       = int(os.environ.get('XC_LEASES_MAX', '50000'))     # distinct name leases stored (backstop)
 
 def _cap_dict(d, maxn):
     # Distinct-key backstop: evict oldest-inserted keys until within maxn. Python dicts are
@@ -818,6 +825,132 @@ def accept_gamesdir(m):
     mark_dirty()
     return True
 
+# --- ANCHOR primitive: signed key-rotation logs + name leases ----------------------------------
+# A self-sovereign identity ("anchor") is a nano_ root address whose CURRENT operational key is proven
+# by a hash-chained event log (inception + pre-rotation rotations, or root recovery). A "lease" binds a
+# human label to an anchor, authorised by the anchor's ROOT key. Both are VERIFIED here at the door
+# (like /release and /gamesdir) so a stored log/lease is only ever a valid one — mirrors the resolve
+# rules in anchor/anchor.py and gateway.py, reusing xc.sig_canon/verify_msg/pub_to_addr + blake2b.
+
+def _anchor_commit(pub_hex):
+    # The pre-rotation commitment: BLAKE2b-256 of the NEXT operational public key (== anchor.py.commit).
+    return hashlib.blake2b(bytes.fromhex(pub_hex), digest_size=32).hexdigest()
+
+def _anchor_event_hash(e):
+    # Hash of an event's canonical preimage — the `prev` link the NEXT event must carry (== event_hash).
+    return hashlib.blake2b(xc.anchor_evt_canon(e).encode(), digest_size=32).hexdigest()
+
+def resolve_anchor(events):
+    # Validate a whole anchor event log; return (True, {anchor,current_key,seq,endpoints}) or
+    # (False, reason). Same rules as anchor.py.resolve(): contiguous seq from 0; every event's sig
+    # verifies over its canon; prev matches the prior event's hash; a 'root' event is signed by the
+    # anchor root key (pub_to_addr(pub)==anchor); a 'pre-rotation' event reveals op_key whose commit
+    # matches the prior `next` and is self-signed (pub==op_key). A silent wrong answer is the worst
+    # outcome — an unverifiable log is REJECTED, never stored on a guess.
+    if xc is None:
+        return False, 'crypto unavailable'
+    if not isinstance(events, list) or not events:
+        return False, 'empty log'
+    try:
+        ev = sorted(events, key=lambda e: e.get('seq'))
+    except Exception:
+        return False, 'unsortable seq'
+    for i, e in enumerate(ev):
+        if not isinstance(e, dict) or e.get('seq') != i:
+            return False, 'non-contiguous/duplicate seq at index %d' % i
+    anchor = ev[0].get('anchor', '')
+    pending = None            # H(next expected operational key)
+    prev_hash = ''
+    current = None
+    for e in ev:
+        seq = e.get('seq')
+        try:
+            if not xc.verify_msg(e.get('pub', ''), xc.anchor_evt_canon(e), e.get('sig', '')):
+                return False, 'seq %s: bad signature' % seq
+            if e.get('prev', '') != prev_hash:
+                return False, 'seq %s: prev hash mismatch (log tampered or reordered)' % seq
+            auth = e.get('authority')
+            if auth == 'root':
+                if xc.pub_to_addr(e.get('pub', '')) != anchor:
+                    return False, 'seq %s: root event not signed by the anchor root key' % seq
+            elif auth == 'pre-rotation':
+                if pending is None:
+                    return False, 'seq %s: pre-rotation before any commitment' % seq
+                if _anchor_commit(e.get('op_key', '')) != pending:
+                    return False, 'seq %s: revealed key does not match the pre-rotation commitment' % seq
+                if e.get('pub') != e.get('op_key'):
+                    return False, 'seq %s: pre-rotation not self-signed by the revealed key' % seq
+            else:
+                return False, 'seq %s: unknown authority %r' % (seq, auth)
+            current = e.get('op_key')
+            pending = e.get('next')
+            prev_hash = _anchor_event_hash(e)
+        except Exception as ex:
+            return False, 'seq %s: %s' % (seq, ex)
+    return True, {'anchor': anchor, 'current_key': current, 'seq': ev[-1].get('seq'),
+                  'endpoints': ev[-1].get('endpoints', {})}
+
+def accept_anchor(m):
+    # Store a signed anchor event log after chain-verifying it. Body may be a bare list of events or
+    # {anchor?, log/events:[...]}. Newest-VALID-longest wins: a valid log replaces a stored one only if
+    # its tip seq is higher, so a peer can extend an anchor (new rotation) but not roll it back to a
+    # shorter chain. Returns (accepted: bool, info: str).
+    if xc is None:
+        return False, 'crypto unavailable'
+    if isinstance(m, list):
+        events = m
+    elif isinstance(m, dict):
+        events = m.get('log') or m.get('events') or []
+    else:
+        return False, 'bad body'
+    if len(events) > ANCHOR_LOG_MAX:
+        return False, 'log too long'
+    ok, res = resolve_anchor(events)
+    if not ok:
+        return False, res
+    aid = res['anchor']
+    cur = anchors.get(aid)
+    if cur is not None:
+        try:
+            cur_tip = max((int(x.get('seq', -1)) for x in cur), default=-1)
+        except Exception:
+            cur_tip = -1
+        if int(res['seq']) <= cur_tip:
+            return False, 'not newer than stored log (tip seq %d)' % cur_tip
+    if cur is None and len(anchors) >= ANCHORS_MAX:
+        return False, 'anchor cap'
+    anchors[aid] = events
+    _cap_dict(anchors, ANCHORS_MAX)
+    mark_dirty()
+    return True, 'stored seq %s' % res['seq']
+
+def accept_lease(m):
+    # Store a signed name lease. Must be ROOT-authorised (pub_to_addr(pub)==anchor) with a valid
+    # signature over lease_canon. FIRST valid claim per label wins — an existing label is never
+    # overwritten (squatting/recycling is a later, Harberger concern). Returns (accepted, info).
+    if xc is None:
+        return False, 'crypto unavailable'
+    if not isinstance(m, dict):
+        return False, 'bad body'
+    label, anchor = m.get('label', ''), m.get('anchor', '')
+    pub, sig = m.get('pub', ''), m.get('sig', '')
+    if not label or not anchor or not pub or not sig:
+        return False, 'missing fields'
+    try:
+        if xc.pub_to_addr(pub) != anchor:
+            return False, 'lease not signed by the anchor root key'
+        if not xc.verify_msg(pub, xc.lease_canon(m), sig):
+            return False, 'bad lease signature'
+    except Exception as ex:
+        return False, str(ex)
+    if label in leases:
+        return False, 'label already claimed'          # first-valid-claim-per-label wins
+    if len(leases) >= LEASES_MAX:
+        return False, 'lease cap'
+    leases[label] = m
+    mark_dirty()
+    return True, 'claimed'
+
 def backfill():
     # SYNC ON JOIN. bootstrap() learns the peer list but pulls no content, so a freshly launched
     # relay used to come up blank and only accumulate what was pushed to it AFTER joining — it never
@@ -950,7 +1083,7 @@ def blob_credit(cid, payhash):
 # (in-memory before this meant comments, uploaded media, likes, poll votes vanished on restart)
 _STATE_KEYS = ('engage', 'notifs', 'supporters', 'follows', 'comments',   # blobs now live in SQLite
                'releases', 'profiles', 'dmkeys', 'pollvotes', 'reports', 'pinned', 'pins_paid',
-               'tips_paid', 'revocations', 'scores', 'games_dir')
+               'tips_paid', 'revocations', 'scores', 'games_dir', 'anchors', 'leases')
 # DMs are persisted SEPARATELY (not via the generic loop above): on disk they stay a FLAT `dms` list in
 # arrival order — so an OLDER relay can still read a store this one writes — and load() re-buckets them.
 
@@ -1720,6 +1853,15 @@ class H(BaseHTTPRequestHandler):
         elif self.path.startswith('/revocations'):
             self._send(200, json.dumps({'relay': PORT, 'root': ROOT_ACCT,
                                         'records': list(revocations.values())}))
+        elif self.path.startswith('/anchor'):
+            # The signed event log for one anchor (id = its nano_ root address). The relay verified the
+            # chain on write; the client still re-resolves it (same trust model as /releases).
+            aid = qs(self.path).get('id', '')
+            self._send(200, json.dumps({'anchor': aid, 'log': anchors.get(aid, [])}))
+        elif self.path.startswith('/lease'):
+            # The winning (first valid) lease for a label, if any.
+            label = qs(self.path).get('label', '')
+            self._send(200, json.dumps({'label': label, 'lease': leases.get(label)}))
         elif self.path.startswith('/releases'):
             pub = qs(self.path).get('pub', '')
             self._send(200, json.dumps({'pub': pub, 'records': releases.get(pub, [])}))
@@ -1997,6 +2139,21 @@ class H(BaseHTTPRequestHandler):
             try:
                 ok = accept_revocation(json.loads(raw or '{}'))
                 self._send(200 if ok else 400, json.dumps({'ok': ok}))
+            except Exception as e:
+                self._send(400, json.dumps({'ok': False, 'error': str(e)}))
+        elif self.path.startswith('/anchor'):
+            # Signed anchor event log. VERIFIED here (chain resolve) before storing — a forged or
+            # tampered log never enters. Newest-valid-longest wins (see accept_anchor).
+            try:
+                ok, info = accept_anchor(json.loads(raw or '{}'))
+                self._send(200 if ok else 400, json.dumps({'ok': ok, 'info': info}))
+            except Exception as e:
+                self._send(400, json.dumps({'ok': False, 'error': str(e)}))
+        elif self.path.startswith('/lease'):
+            # Signed name lease. VERIFIED here (root-authorised + signature). First valid claim wins.
+            try:
+                ok, info = accept_lease(json.loads(raw or '{}'))
+                self._send(200 if ok else 400, json.dumps({'ok': ok, 'info': info}))
             except Exception as e:
                 self._send(400, json.dumps({'ok': False, 'error': str(e)}))
         elif self.path.startswith('/release'):
