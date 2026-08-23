@@ -36,6 +36,10 @@ import 'body.dart';
 import 'wallet.dart';
 import 'mesh.dart';
 import 'ledger_discovery.dart';
+import 'anchored_recovery.dart'; // A2 recovery screen — only reachable behind kAnchoredEnabled
+import 'anchored_viewer.dart';   // B3 content viewer — only reachable behind kAnchoredEnabled
+import 'anchored_publish.dart';  // B4 publish flow — only reachable behind kAnchoredEnabled
+import 'anchored_badge.dart';    // A3 author badge — only built behind kAnchoredEnabled
 
 // The engine/relay endpoint. Default: the Android emulator reaches the host loopback at
 // 10.0.2.2. Runtime-configurable (Settings → Connection) so the app can point at a hosted
@@ -182,6 +186,10 @@ const String kAppVersion = '2.5.11'; // this build; the update checker compares 
 // node to gossip, and with only a couple of fully-synced relays there's nothing to backfill. Flip to true
 // once the relay set is large/laggy enough that a supporter's re-push actually fills a gap.
 const bool kSupporterEnabled = false;
+// Anchored naming (recovery + verified anchored-content viewer) — SHIPPED HIDDEN behind this flag,
+// exactly like supporter/games. With it false, none of the new surface or behaviour is reachable and
+// the app is byte-for-byte its current self. Flip to true only once the branch is reviewed.
+const bool kAnchoredEnabled = false;
 // 2.3.0: HARD signing-format break (issue #2) — domain-tagged, length-prefixed signature preimage
 // (see NanoWallet.sigCanon / node xc_common.sig_canon). Signatures from 2.2.x no longer verify, so
 // heads/comments/follows/profiles/polls/dm-keys must be re-published from this build onward.
@@ -6144,6 +6152,42 @@ class _FeedScreenState extends State<FeedScreen> with WidgetsBindingObserver {
                 _showUpdates();
               },
             ),
+            if (kAnchoredEnabled)
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: const Icon(Icons.verified_user_outlined, color: kText, size: 20),
+                title: const Text('Account recovery', style: TextStyle(color: kText, fontWeight: FontWeight.w700, fontSize: 15)),
+                subtitle: const Text('recoverable identity · rotate a compromised key', style: TextStyle(color: kDim, fontSize: 12)),
+                trailing: const Icon(Icons.chevron_right, color: kDim),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  Navigator.push(context, MaterialPageRoute(builder: (_) => const AnchoredRecoveryScreen()));
+                },
+              ),
+            if (kAnchoredEnabled)
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: const Icon(Icons.travel_explore, color: kText, size: 20),
+                title: const Text('Anchored content', style: TextStyle(color: kText, fontWeight: FontWeight.w700, fontSize: 15)),
+                subtitle: const Text('resolve a name · verify on-device · view', style: TextStyle(color: kDim, fontSize: 12)),
+                trailing: const Icon(Icons.chevron_right, color: kDim),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  Navigator.push(context, MaterialPageRoute(builder: (_) => const AnchoredViewerScreen()));
+                },
+              ),
+            if (kAnchoredEnabled)
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: const Icon(Icons.drive_file_rename_outline, color: kText, size: 20),
+                title: const Text('Publish content', style: TextStyle(color: kText, fontWeight: FontWeight.w700, fontSize: 15)),
+                subtitle: const Text('claim a name · publish a verifiable page', style: TextStyle(color: kDim, fontSize: 12)),
+                trailing: const Icon(Icons.chevron_right, color: kDim),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  Navigator.push(context, MaterialPageRoute(builder: (_) => const AnchoredPublishScreen()));
+                },
+              ),
             const SizedBox(height: 6),
             if (!reveal)
               OutlinedButton.icon(
@@ -10083,6 +10127,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                           Text(name, style: const TextStyle(color: kText, fontWeight: FontWeight.w800, fontSize: 20)),
                           const SizedBox(width: 6),
                           const Icon(Icons.verified, size: 17, color: kAccent),
+                          if (kAnchoredEnabled) AnchoredIdentityBadge(widget.account, size: 16),
                         ]),
                         Text('@${widget.handle} ·${acctTag(widget.account)}',
                             style: const TextStyle(color: kDim, fontSize: 14)),
@@ -11318,6 +11363,7 @@ class _PostCardState extends State<PostCard> {
               ),
               const SizedBox(width: 6),
               const Icon(Icons.verified, size: 15, color: kAccent),
+              if (kAnchoredEnabled) AnchoredIdentityBadge(p.account),
               const SizedBox(width: 5),
               Text('·${acctTag(p.account)}',   // account discriminator: distinguishes same-handle accounts
                   style: const TextStyle(color: kDim, fontSize: 11.5, fontFamily: 'monospace')),
