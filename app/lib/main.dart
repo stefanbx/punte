@@ -38,6 +38,7 @@ import 'mesh.dart';
 import 'ledger_discovery.dart';
 import 'anchored_recovery.dart'; // A2 recovery screen — only reachable behind kAnchoredEnabled
 import 'anchored_viewer.dart';   // B3 content viewer — only reachable behind kAnchoredEnabled
+import 'anchored_publish.dart';  // B4 publish flow — only reachable behind kAnchoredEnabled
 
 // The engine/relay endpoint. Default: the Android emulator reaches the host loopback at
 // 10.0.2.2. Runtime-configurable (Settings → Connection) so the app can point at a hosted
@@ -6172,6 +6173,18 @@ class _FeedScreenState extends State<FeedScreen> with WidgetsBindingObserver {
                 onTap: () {
                   Navigator.pop(ctx);
                   Navigator.push(context, MaterialPageRoute(builder: (_) => const AnchoredViewerScreen()));
+                },
+              ),
+            if (kAnchoredEnabled)
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: const Icon(Icons.drive_file_rename_outline, color: kText, size: 20),
+                title: const Text('Publish content', style: TextStyle(color: kText, fontWeight: FontWeight.w700, fontSize: 15)),
+                subtitle: const Text('claim a name · publish a verifiable page', style: TextStyle(color: kDim, fontSize: 12)),
+                trailing: const Icon(Icons.chevron_right, color: kDim),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  Navigator.push(context, MaterialPageRoute(builder: (_) => const AnchoredPublishScreen()));
                 },
               ),
             const SizedBox(height: 6),

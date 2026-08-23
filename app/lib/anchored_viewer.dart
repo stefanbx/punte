@@ -35,7 +35,9 @@ const String kAnchorContentHost = 'https://xchat-content-host.fly.dev';
 const List<String> kAnchorDemoNames = ['counter', 'greeter'];
 
 class AnchoredViewerScreen extends StatefulWidget {
-  const AnchoredViewerScreen({super.key});
+  /// When set (e.g. jumping here straight after publishing), the name is resolved automatically on open.
+  final String? initialName;
+  const AnchoredViewerScreen({super.key, this.initialName});
   @override
   State<AnchoredViewerScreen> createState() => _AnchoredViewerScreenState();
 }
@@ -46,6 +48,16 @@ class _AnchoredViewerScreenState extends State<AnchoredViewerScreen> {
   String? _error; // set → "could not verify" state; we NEVER render content while this is non-null
   AnchorResult? _result; // the verified resolution backing the provenance chip
   WebViewController? _webView;
+
+  @override
+  void initState() {
+    super.initState();
+    final n = widget.initialName?.trim() ?? '';
+    if (n.isNotEmpty) {
+      _nameCtrl.text = n;
+      WidgetsBinding.instance.addPostFrameCallback((_) => _go(n));
+    }
+  }
 
   @override
   void dispose() {

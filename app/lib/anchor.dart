@@ -325,6 +325,158 @@ Future<void> publishAnchorLog(
   if (!stored) throw AnchorError('publish rejected by all relays: $lastErr');
 }
 
+// ───────────────────────────── PART A-pub: publish CONTENT under a per-name anchor ─────────────────
+// A published name is its OWN anchor (a dedicated keypair) whose tip endpoints point at the content blob:
+// endpoints = {"web":"content:sha256-<hex>"} — exactly what resolveAnchor reads. The anchor's keypairs are
+// DERIVED from the publisher's wallet seed + the name (the same BLAKE2b(seed||purpose) construction as
+// NanoWallet.channelWallet), so a published name is restorable from the seed alone and needs no extra
+// secret storage. Ownership lives in the seed: only its holder can mint the root signature the inception +
+// lease require, so no one else can claim or move the name.
+
+/// The `sha256-<hex>` content id of [bytes] — the exact cid resolveAnchor recomputes and checks.
+String cidOf(List<int> bytes) => 'sha256-${sha256.convert(bytes).toString()}';
+
+/// Derive a deterministic sub-wallet from [base]'s seed for [purpose] (BLAKE2b-256 of seed||purpose — the
+/// channelWallet construction). Same seed + purpose ⇒ same keypair on any device.
+NanoWallet _deriveWallet(NanoWallet base, String purpose) {
+  final cs = Blake2b.digest256([
+    NanoHelpers.hexToBytes(base.seed),
+    Uint8List.fromList(utf8.encode(purpose)),
+  ]);
+  return NanoWallet(NanoHelpers.byteToHex(cs).toLowerCase());
+}
+
+/// The (root, op0, op1) keypairs of the content anchor for [name], all derived from [base]'s seed. `root`
+/// is the anchor identity (signs the lease + inception); `op0` is the seq-0 operational key; `op1` is the
+/// seq-1 pre-rotation commitment target, so the content can be UPDATED later by revealing op1.
+class ContentAnchorKeys {
+  final NanoWallet root, op0, op1;
+  const ContentAnchorKeys(this.root, this.op0, this.op1);
+  String get anchor => root.account;
+}
+
+/// Derive the content-anchor keys for [name] from [base]'s seed.
+ContentAnchorKeys contentAnchorKeys(NanoWallet base, String name) {
+  final n = name.trim().toLowerCase();
+  return ContentAnchorKeys(
+    _deriveWallet(base, 'xchat-anchor-content-root:$n'),
+    _deriveWallet(base, 'xchat-anchor-content-op:$n:0'),
+    _deriveWallet(base, 'xchat-anchor-content-op:$n:1'),
+  );
+}
+
+/// POST a content blob ({cid,b64}) to every relay so /blob can later serve it. Returns the cid; succeeds
+/// if AT LEAST ONE relay stored it.
+Future<String> uploadBlob(
+  List<int> bytes, {
+  http.Client? client,
+  List<String> relays = kAnchorRelays,
+}) async {
+  final c = client ?? http.Client();
+  final ownClient = client == null;
+  final cid = cidOf(bytes);
+  final body = jsonEncode({'cid': cid, 'b64': base64.encode(bytes)});
+  Object? lastErr;
+  var stored = false;
+  try {
+    for (final base in relays) {
+      try {
+        final r = await c
+            .post(Uri.parse('$base/blob'),
+                headers: {'content-type': 'application/json'}, body: body)
+            .timeout(const Duration(seconds: 20));
+        if (r.statusCode ~/ 100 == 2) {
+          stored = true;
+        } else {
+          lastErr = AnchorError('$base/blob -> HTTP ${r.statusCode}: ${r.body}');
+        }
+      } catch (e) {
+        lastErr = e;
+      }
+    }
+  } finally {
+    if (ownClient) c.close();
+  }
+  if (!stored) throw AnchorError('blob upload rejected by all relays: $lastErr');
+  return cid;
+}
+
+/// POST a signed lease map to every relay. Succeeds if AT LEAST ONE stored it. A relay 400 means the lease
+/// was rejected (most often the name is already claimed) — surfaced in the thrown message.
+Future<void> publishLease(
+  Map<String, dynamic> lease, {
+  http.Client? client,
+  List<String> relays = kAnchorRelays,
+}) async {
+  final c = client ?? http.Client();
+  final ownClient = client == null;
+  final body = jsonEncode(lease);
+  Object? lastErr;
+  var stored = false;
+  try {
+    for (final base in relays) {
+      try {
+        final r = await c
+            .post(Uri.parse('$base/lease'),
+                headers: {'content-type': 'application/json'}, body: body)
+            .timeout(const Duration(seconds: 15));
+        if (r.statusCode ~/ 100 == 2) {
+          stored = true;
+        } else {
+          lastErr = AnchorError('$base/lease -> HTTP ${r.statusCode}: ${r.body}');
+        }
+      } catch (e) {
+        lastErr = e;
+      }
+    }
+  } finally {
+    if (ownClient) c.close();
+  }
+  if (!stored) throw AnchorError('lease rejected by all relays: $lastErr');
+}
+
+/// A published name: its dedicated anchor and the content cid it now points at.
+class PublishResult {
+  final String name, anchor, cid;
+  final int seq;
+  const PublishResult({
+    required this.name,
+    required this.anchor,
+    required this.cid,
+    required this.seq,
+  });
+}
+
+/// Publish [contentBytes] under [name] as a fresh per-name anchor, signed with keys derived from
+/// [publisher]'s seed. Steps: cid → upload blob → sign+publish an inception event whose tip points at the
+/// content → sign+publish the name lease. Throws AnchorError if a relay rejects (e.g. the name is taken).
+/// The result resolves through [resolveAnchor] immediately, verifying end-to-end on any device.
+Future<PublishResult> publishContent({
+  required NanoWallet publisher,
+  required String name,
+  required List<int> contentBytes,
+  required int ts,
+  http.Client? client,
+  List<String> relays = kAnchorRelays,
+}) async {
+  final n = name.trim().toLowerCase();
+  if (n.isEmpty) throw AnchorError('empty name');
+  final c = client ?? http.Client();
+  final ownClient = client == null;
+  try {
+    final keys = contentAnchorKeys(publisher, n);
+    final cid = await uploadBlob(contentBytes, client: c, relays: relays);
+    final ev0 = inception(keys.root, keys.op0.pub, commit(keys.op1.pub), ts,
+        endpoints: {'web': 'content:$cid'});
+    await publishAnchorLog([ev0], client: c, relays: relays);
+    final lease = makeLease(n, keys.root, ts);
+    await publishLease(lease, client: c, relays: relays);
+    return PublishResult(name: n, anchor: keys.anchor, cid: cid, seq: 0);
+  } finally {
+    if (ownClient) c.close();
+  }
+}
+
 // ───────────────────────────── PART B resolver: verify a name end to end ─────────────────────────
 
 /// Validate a whole anchor event log (anchor.py resolve) and return the tip event. Throws AnchorError on
