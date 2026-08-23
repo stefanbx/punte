@@ -39,6 +39,7 @@ import 'ledger_discovery.dart';
 import 'anchored_recovery.dart'; // A2 recovery screen — only reachable behind kAnchoredEnabled
 import 'anchored_viewer.dart';   // B3 content viewer — only reachable behind kAnchoredEnabled
 import 'anchored_publish.dart';  // B4 publish flow — only reachable behind kAnchoredEnabled
+import 'anchored_badge.dart';    // A3 author badge — only built behind kAnchoredEnabled
 
 // The engine/relay endpoint. Default: the Android emulator reaches the host loopback at
 // 10.0.2.2. Runtime-configurable (Settings → Connection) so the app can point at a hosted
@@ -10126,6 +10127,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                           Text(name, style: const TextStyle(color: kText, fontWeight: FontWeight.w800, fontSize: 20)),
                           const SizedBox(width: 6),
                           const Icon(Icons.verified, size: 17, color: kAccent),
+                          if (kAnchoredEnabled) AnchoredIdentityBadge(widget.account, size: 16),
                         ]),
                         Text('@${widget.handle} ·${acctTag(widget.account)}',
                             style: const TextStyle(color: kDim, fontSize: 14)),
@@ -11361,6 +11363,7 @@ class _PostCardState extends State<PostCard> {
               ),
               const SizedBox(width: 6),
               const Icon(Icons.verified, size: 15, color: kAccent),
+              if (kAnchoredEnabled) AnchoredIdentityBadge(p.account),
               const SizedBox(width: 5),
               Text('·${acctTag(p.account)}',   // account discriminator: distinguishes same-handle accounts
                   style: const TextStyle(color: kDim, fontSize: 11.5, fontFamily: 'monospace')),
