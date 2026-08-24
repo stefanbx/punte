@@ -4615,6 +4615,7 @@ class _FeedScreenState extends State<FeedScreen> with WidgetsBindingObserver {
 
   void _openThread(Post p) {
     if (p.kind == 'article') { _openArticle(p); return; }   // long-form → full-screen reader
+    if (p.kind == 'page') { _openKnotPage(p); return; }      // Keel content page → zero-JS WebView
     final root = _threadRoot(p);
     final chain = _threadChain(root);
     Navigator.of(context).push(MaterialPageRoute(builder: (_) => Scaffold(
@@ -4717,6 +4718,14 @@ class _FeedScreenState extends State<FeedScreen> with WidgetsBindingObserver {
         }),
       ]),
     )));
+  }
+
+  // A Keel content page → the locked-down, zero-JS WebView render. The blob (rendered HTML) lives at
+  // p.media, exactly like a photo/article stores its cid there.
+  void _openKnotPage(Post p) {
+    Navigator.push(context, MaterialPageRoute(builder: (_) => KnotPageView(
+        htmlCid: p.media ?? '',
+        title: (p.title == null || p.title!.isEmpty) ? 'Page' : p.title!)));
   }
 
   Widget _readerActionRow(Post p) {
@@ -11056,6 +11065,104 @@ class _GamePlayerState extends State<GamePlayer> {
   }
 }
 
+// A Keel content page: a verified, ZERO-JavaScript HTML blob rendered in a locked-down WebView.
+// Mirrors GamePlayer's fetch/loading/error shape, but inverted for safety — JS is DISABLED, a CSP
+// meta forbids script + network, a belt-and-braces gate refuses any blob carrying script, and every
+// navigation the page attempts is intercepted natively (the WebView never loads a URL of its own).
+class KnotPageView extends StatefulWidget {
+  final String htmlCid;   // cid of the rendered zero-JS HTML blob (stored in Post.media)
+  final String title;
+  const KnotPageView({super.key, required this.htmlCid, required this.title});
+  @override
+  State<KnotPageView> createState() => _KnotPageViewState();
+}
+
+class _KnotPageViewState extends State<KnotPageView> {
+  WebViewController? _c;
+  bool _loading = true;
+  String? _err;
+  bool _loadedOnce = false;   // only the initial in-memory load is allowed; everything else is intercepted
+
+  // render_html never emits any of these; this is the belt-and-braces gate for an unattested Level-A
+  // blob whose provenance isn't yet verified (Level B). A hit means the blob is not safe to display.
+  static final RegExp _onHandler = RegExp(r'on\w+\s*=', caseSensitive: false);
+  bool _hasActiveContent(String html) {
+    final lower = html.toLowerCase();
+    return lower.contains('<script') || lower.contains('javascript:') || _onHandler.hasMatch(html);
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    final cid = widget.htmlCid;
+    final html = cid.isEmpty ? null : await Api.gameHtml(cid);   // media(cid) decoded to utf8
+    if (!mounted) return;
+    if (html == null) { setState(() { _err = 'Could not load this page from the relays.'; _loading = false; }); return; }
+    // ZERO-JS gate: refuse anything that could execute, rather than render it.
+    if (_hasActiveContent(html)) {
+      setState(() { _err = 'This page could not be safely displayed.'; _loading = false; });
+      return;
+    }
+    // Inject a strict, no-script, no-network CSP before the page ever loads.
+    const csp = '<meta http-equiv="Content-Security-Policy" '
+        'content="default-src \'none\'; img-src data:; style-src \'unsafe-inline\'; '
+        'script-src \'none\'; connect-src \'none\'">';
+    final gated = html.contains('</head>')
+        ? html.replaceFirst('</head>', '$csp</head>')
+        : '<head>$csp</head>$html';
+    final c = WebViewController()
+      ..setJavaScriptMode(JavaScriptMode.disabled)   // ZERO-JS — the opposite of GamePlayer
+      ..setBackgroundColor(kBg)
+      ..setNavigationDelegate(NavigationDelegate(onNavigationRequest: _onNavigation))
+      ..loadHtmlString(gated);
+    setState(() { _c = c; _loading = false; });
+  }
+
+  // The WebView must NEVER navigate itself or externally. Only the initial in-memory load is allowed;
+  // a page's links are render_html's Link form ("/go?name=<name>") — those are intercepted and handled
+  // natively. Everything else (http/https and any other scheme) is denied outright.
+  NavigationDecision _onNavigation(NavigationRequest req) {
+    final url = req.url;
+    // Allow the one initial load of the in-memory document.
+    if (!_loadedOnce && (url == 'about:blank' || url.startsWith('data:') || url.startsWith('about:'))) {
+      _loadedOnce = true;
+      return NavigationDecision.navigate;
+    }
+    // A link to another page: intercept, never let the WebView load it.
+    final go = Uri.tryParse(url);
+    if (go != null && (go.path == '/go' || go.path.endsWith('/go'))) {
+      final name = go.queryParameters['name'] ?? '';
+      if (mounted && name.isNotEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Opens page: $name')));
+      }
+      return NavigationDecision.prevent;
+    }
+    return NavigationDecision.prevent;   // no http/https, no external scheme, ever
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: kBg,
+      appBar: AppBar(
+        backgroundColor: kBg,
+        iconTheme: const IconThemeData(color: kText),
+        title: Text(widget.title, style: const TextStyle(color: kText, fontWeight: FontWeight.w800)),
+      ),
+      body: _err != null
+          ? Center(child: Padding(padding: const EdgeInsets.all(24),
+              child: Text(_err!, textAlign: TextAlign.center, style: const TextStyle(color: kDim, fontSize: 15))))
+          : (_loading || _c == null)
+              ? const Center(child: CircularProgressIndicator(color: kAccent))
+              : WebViewWidget(controller: _c!),
+    );
+  }
+}
+
 class LeaderboardScreen extends StatefulWidget {
   final Map<String, dynamic> game;
   final String myAccount, myHandle;
@@ -11428,8 +11535,46 @@ class _PostCardState extends State<PostCard> {
                 child: Text(p.title!,
                     style: const TextStyle(color: kText, fontWeight: FontWeight.w700, fontSize: 16, height: 1.3)),
               ),
-            // tap the post body → open the full conversation (the entire post + all replies), X-style
-            GestureDetector(
+            // A Keel content page renders as a rich card (icon/chip + title + plain-text preview);
+            // tapping opens the full zero-JS WebView render. The card never loads the page, so the
+            // feed stays cheap to scroll — same principle as the article card.
+            if (p.kind == 'page')
+              Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  onTap: widget.onOpenThread,
+                  child: Container(
+                    padding: const EdgeInsets.all(14),
+                    decoration: BoxDecoration(
+                      color: kCard,
+                      borderRadius: BorderRadius.circular(14),
+                      border: Border.all(color: kLine),
+                    ),
+                    child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                      Row(children: const [
+                        Icon(Icons.description_outlined, size: 16, color: kAccent),
+                        SizedBox(width: 6),
+                        Text('Page', style: TextStyle(color: kAccent, fontSize: 12.5,
+                            fontWeight: FontWeight.w800, letterSpacing: 0.3)),
+                      ]),
+                      if (p.title != null && p.title!.isNotEmpty) ...[
+                        const SizedBox(height: 8),
+                        Text(p.title!, style: const TextStyle(color: kText,
+                            fontWeight: FontWeight.w700, fontSize: 16, height: 1.3)),
+                      ],
+                      if (chBody.isNotEmpty) ...[
+                        const SizedBox(height: 4),
+                        Text(chBody, maxLines: 3, overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(color: kDim, fontSize: 14.5, height: 1.4)),
+                      ],
+                    ]),
+                  ),
+                ),
+              ),
+            // tap the post body → open the full conversation (the entire post + all replies), X-style.
+            // A page has no inline body — its card above is the whole affordance — so skip this.
+            if (p.kind != 'page') GestureDetector(
               behavior: HitTestBehavior.opaque,
               onTap: widget.onOpenThread,
               child: p.kind == 'article'
@@ -11474,7 +11619,7 @@ class _PostCardState extends State<PostCard> {
             // was strand you: inside a thread, a long REPLY is not the focused post, so it stayed
             // truncated and its "Show more" pushed ANOTHER thread view of the same conversation, showing
             // the same truncated reply. There was no way to read a long reply at all.
-            if (longText && !_expanded && p.kind != 'article')
+            if (longText && !_expanded && p.kind != 'article' && p.kind != 'page')
               GestureDetector(
                 onTap: () => setState(() => _expanded = true),
                 child: const Padding(
