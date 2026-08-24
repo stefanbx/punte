@@ -6,5 +6,13 @@
     "cid": "sha256-5a03f91019fc85ee6239fb19a63e06ed0eda53cebc0d85e0c9e0ec48aa123b1d",
     "author": "ӾChat",
     "icon": "🐍"
+  },
+  {
+    "id": "stack",
+    "title": "Ӿ Stack",
+    "file": "stack.html",
+    "cid": "sha256-276d5f99bc7fb9852c10341dc7fbc69346b4022281e5b75ec53d4e0f1e6cccc2",
+    "author": "ӾChat",
+    "icon": "🧱"
   }
 ]
