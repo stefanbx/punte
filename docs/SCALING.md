@@ -1,4 +1,4 @@
-# ӾChat — relay persistence & scaling
+# Knot — relay persistence & scaling
 
 How relay state survives restarts today, how many users one relay can serve, and the path to
 high traffic. Written against the beta node (`backend/`, `relay/xc_relayd.py`, `deploy/`).

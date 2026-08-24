@@ -1,6 +1,6 @@
-# ӾChat
+# Knot
 
-**A censorship-free X (Twitter), discovered on the XNO ledger.**
+**A sovereign, censorship-free social network, discovered on the XNO ledger.**
 
 You *are* a Nano keypair — no email, no password, no server account. Posts are **signed events
 replicated across interchangeable relays**, and the app finds those relays by **scanning the Nano
@@ -10,7 +10,7 @@ store in the path. *(The "Ӿ" is the XNO symbol.)*
 
 <p align="center">
   <img src="docs/img/feed.png" width="300"
-       alt="ӾChat feed — signed posts on plural relays, discovered on the XNO ledger">
+       alt="Knot feed — signed posts on plural relays, discovered on the XNO ledger">
 </p>
 
 **Try it (Android)** → [download the signed APK](apk/xchat-alpha.apk) (verify its checksum

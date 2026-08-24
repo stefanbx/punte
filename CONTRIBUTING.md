@@ -1,4 +1,4 @@
-# Building & contributing to ӾChat
+# Building & contributing to Knot
 
 Everything here is source you can build, change, and run. Contributions welcome — the roadmap
 items in the whitepaper (hardware-backed seed storage, multi-tenant hosting, richer moderation,
