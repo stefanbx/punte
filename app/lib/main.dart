@@ -11085,7 +11085,9 @@ class _KnotPageViewState extends State<KnotPageView> {
 
   // render_html never emits any of these; this is the belt-and-braces gate for an unattested Level-A
   // blob whose provenance isn't yet verified (Level B). A hit means the blob is not safe to display.
-  static final RegExp _onHandler = RegExp(r'on\w+\s*=', caseSensitive: false);
+  // \b keeps this from false-matching an innocent attribute like `content=` (the "on" inside
+  // "c-ontent" is not at a word boundary) — it only flags real inline handlers like ` onclick=`.
+  static final RegExp _onHandler = RegExp(r'\bon\w+\s*=', caseSensitive: false);
   bool _hasActiveContent(String html) {
     final lower = html.toLowerCase();
     return lower.contains('<script') || lower.contains('javascript:') || _onHandler.hasMatch(html);
