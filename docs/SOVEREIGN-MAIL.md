@@ -43,13 +43,21 @@ send ──▶ relay mailbox (ciphertext)
 
 ## Components (what to build)
 
-1. **Relay: transient mailbox** — a signed `POST /dm_delete {account, mids, ts, sig, pub}` that removes the
-   caller's own delivered messages (ownership-checked). Optionally a blind variant sealed to the relay key,
-   so the delete doesn't re-expose the account (mirrors `/dm_sealed_read`).
-2. **Client: local encrypted archive** — a persistent on-device store of received (and sent-self) messages,
-   keyed by `mid`, encrypted at rest to the user's DM key. The Mail view reads from the archive first, then
-   merges anything new off the relay; after writing new ones it fires the delete.
-3. **Relay: push notices (FIRST PIECE, this iteration)** — the registrar/relay is itself a *sender*: as a
+1. **Relay: transient mailbox (DONE)** — a signed `POST /dm_delete {account, mids, ts, sig, pub}` removes the
+   caller's own delivered messages, matched by `mid`. The signature is over
+   `sig_canon('dmdelete', acc, ts, sha256(sorted mids))`, so it proves mailbox ownership AND binds the exact
+   mid set — a captured token can neither delete a different set nor another mailbox; the same
+   `DM_SIG_WINDOW` bounds its lifetime. Only the caller's own bucket is ever touched (`_dm_delete`). Tested
+   by `test/dm_delete_test.py` (15 checks). *(A blind variant sealed to the relay key, so the delete doesn't
+   re-expose the account like `/dm_sealed_read`, is a later refinement.)*
+2. **Client: local encrypted archive (DONE)** — `lib/mail_archive.dart`: a persistent on-device store of
+   received (and sent-self) messages, keyed by `mid`, **encrypted at rest** with a self-box to the user's DM
+   key (only the seed opens it; written temp-then-rename so a crash never truncates it). `inbox()` now
+   decrypts fresh records, writes them to the archive FIRST, then ACK-deletes them off every relay, and
+   returns archive ∪ this poll — so a delivered message stops existing on the relay yet persists locally.
+   Proven end to end by `test/mail_archive_test.dart` (archived → relay drops → survives the drop → on-disk
+   bytes are ciphertext).
+3. **Relay: push notices (DONE)** — the registrar/relay is itself a *sender*: as a
    subscription nears expiry it seals a renewal notice to the owner's published DM key and drops it in their
    mailbox. The owner receives it in Mail like any message. This closes the renewal loop with a real push,
    not just a locally-synthesized reminder.
@@ -64,5 +72,6 @@ send ──▶ relay mailbox (ciphertext)
 
 ## Build order
 
-Push notices (3) now — they exercise the relay-as-sender path and immediately close the renewal loop. Then
-the client local archive (2) + relay delete (1) to make the relay truly transient. Read receipts (4) last.
+Push notices (3) ✅ → client local archive (2) + relay transient delete (1) ✅ — the relay is now truly
+transient: a delivered message is archived locally (encrypted to the seed) and dropped from every relay.
+Remaining: read receipts (4, optional), and the blind sealed delete variant.

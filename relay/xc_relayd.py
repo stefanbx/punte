@@ -410,6 +410,34 @@ def _dm_store(m):
         _dm_order = deque(_dms_flat())
     return True
 
+
+def _dm_delete(acc, mids):
+    # TRANSIENT MAILBOX (docs/SOVEREIGN-MAIL): once a recipient has archived a message locally it ACKs by
+    # deleting it here, so a delivered message stops existing on the relay. Only the mailbox OWNER can call
+    # this (ownership is checked at the route), and it only ever removes records from that owner's OWN
+    # bucket — never anyone else's. Records are matched by `mid` (present on every v1/v2 record we mint).
+    # Returns the count removed. _dm_order refs become tombstones (skipped via _dm_seen), squeezed lazily.
+    global _dm_order
+    want = set(m for m in mids if m)
+    bucket = dms_by_to.get(acc)
+    if not want or not bucket:
+        return 0
+    removed = 0
+    keep = []
+    for rec in bucket:
+        if rec.get('mid') in want:
+            _dm_forget(rec); removed += 1
+        else:
+            keep.append(rec)
+    if removed:
+        if keep:
+            dms_by_to[acc] = keep
+        else:
+            dms_by_to.pop(acc, None)
+        if len(_dm_order) > 2 * _dm_total + 64:           # squeeze out accumulated tombstones
+            _dm_order = deque(_dms_flat())
+    return removed
+
 # Reading a mailbox: prove you own it.
 #
 # /dm returns records whose BODIES are sealed but whose `to`, `from` and `ts` are not, so serving
@@ -2498,6 +2526,36 @@ class H(BaseHTTPRequestHandler):
                 # A malformed/undecryptable envelope reveals nothing to seal back to, so answer in the
                 # clear — the caller learns its request never opened. No mailbox contents are exposed.
                 self._send(400, json.dumps({'error': 'bad sealed read: %s' % e}))
+        elif self.path.startswith('/dm_delete'):
+            # TRANSIENT MAILBOX ACK (docs/SOVEREIGN-MAIL): the recipient has archived these messages
+            # locally and now clears them from the relay. Body {account, mids, ts, sig, pub}; the signature
+            # (over sig_canon('dmdelete', acc, ts, sha256(sorted mids))) proves mailbox OWNERSHIP and binds
+            # the exact mid set, so a captured token can neither delete a different set nor another mailbox.
+            # Only the caller's OWN bucket is touched. MUST be matched before '/dm'.
+            try:
+                m = json.loads(raw or '{}')
+                acc = m.get('account', '')
+                mids = m.get('mids') or []
+                ts, sig, pub = m.get('ts', ''), m.get('sig', ''), m.get('pub', '')
+                if not (isinstance(mids, list) and acc and sig and pub and ts != ''):
+                    self._send(400, json.dumps({'ok': False, 'error': 'account, mids, ts, sig, pub required'})); return
+                try:
+                    ts_i = int(ts)
+                except (TypeError, ValueError):
+                    self._send(400, json.dumps({'ok': False, 'error': 'bad ts'})); return
+                if abs(time.time() - ts_i) > DM_SIG_WINDOW:      # bearer-token lifetime, same bound as reads
+                    self._send(400, json.dumps({'ok': False, 'error': 'signature expired'})); return
+                mids = [str(x) for x in mids]
+                mids_h = hashlib.sha256('\n'.join(sorted(set(mids))).encode()).hexdigest()
+                if xc.pub_to_addr(pub) != acc or not xc.verify_msg(
+                        pub, xc.sig_canon('dmdelete', acc, ts_i, mids_h), sig):
+                    self._send(403, json.dumps({'ok': False, 'error': 'bad signature'})); return
+                removed = _dm_delete(acc, mids)
+                if removed:
+                    mark_dirty()
+                self._send(200, json.dumps({'ok': True, 'removed': removed}))
+            except Exception as e:
+                self._send(400, json.dumps({'ok': False, 'error': str(e)}))
         elif self.path.startswith('/dm'):
             # store an encrypted DM (O(1) dedup by _dm_key: `mid` for sealed v2, else (from, ts)). The relay
             # only holds ciphertext. Bucketed by recipient and bounded per-mailbox (DM_PER_ACCT), by distinct
