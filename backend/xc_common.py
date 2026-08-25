@@ -347,6 +347,11 @@ def lease_canon(m):
     # int/str ts the tools emit (sig_canon coerces anyway) but pins the preimage explicitly.
     return sig_canon('anchor-lease', m.get('label', ''), m.get('anchor', ''), str(m.get('ts', '')))
 
+def card_canon(m):
+    # signed page metadata: title/description/tags for a leased name
+    return sig_canon('anchor-card', m.get('label', ''), m.get('anchor', ''),
+                     m.get('title', ''), m.get('description', ''), m.get('tags', ''), str(m.get('ts', '')))
+
 def anchor_evt_canon(e):
     # The canonical signing preimage for ONE anchor event. Byte-for-byte identical to
     # anchor.py::_canon: type 'anchor-evt', fields anchor, str(seq), prev, authority, op_key, next,

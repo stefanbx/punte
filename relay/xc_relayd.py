@@ -133,6 +133,8 @@ tips_paid = {}                       # tip payhash -> cid, so one on-chain payme
 # door like /release and /gamesdir — a stored event log or lease is only ever a valid one.
 anchors = {}                         # anchor_id (nano_ root address) -> [signed event log], chain-verified
 leases  = {}                         # label -> winning signed lease; FIRST valid claim per label wins
+cards   = {}                         # label -> signed page card (title/description/tags); NEWEST ts wins,
+                                     # only for a name the anchor already owns (see accept_card)
 known = {SELF}                       # relays this relay knows about (flat URL set — the legacy wire format)
 # A relay's IDENTITY is its own keypair, not its URL. A relay behind a Cloudflare quick tunnel gets a
 # brand-new hostname on every restart, and a URL-keyed peer set treats each one as a new relay: the
@@ -951,6 +953,42 @@ def accept_lease(m):
     mark_dirty()
     return True, 'claimed'
 
+def accept_card(m):
+    # Store a signed PAGE CARD (title/description/tags) for a leased name, for discovery/search. Must be
+    # ROOT-authorised (pub_to_addr(pub)==anchor) with a valid signature over card_canon, AND the anchor
+    # must already OWN the name (a winning lease whose anchor matches). NEWEST ts wins (unlike lease's
+    # first-wins) so the owner can update the card. Returns (accepted, info).
+    if xc is None:
+        return False, 'crypto unavailable'
+    if not isinstance(m, dict):
+        return False, 'bad body'
+    label, anchor = m.get('label', ''), m.get('anchor', '')
+    pub, sig = m.get('pub', ''), m.get('sig', '')
+    if not label or not anchor or not pub or not sig:
+        return False, 'missing fields'
+    lz = leases.get(label)
+    if not isinstance(lz, dict) or lz.get('anchor') != anchor:
+        return False, 'card anchor does not own this name'
+    try:
+        if xc.pub_to_addr(pub) != anchor:
+            return False, 'card not signed by the anchor root key'
+        if not xc.verify_msg(pub, xc.card_canon(m), sig):
+            return False, 'bad card signature'
+    except Exception as ex:
+        return False, str(ex)
+    cur = cards.get(label)
+    if isinstance(cur, dict):
+        try:
+            if int(cur.get('ts', 0)) >= int(m.get('ts', 0)):
+                return False, 'stale card'                # newest-ts wins
+        except Exception:
+            return False, 'bad ts'
+    if label not in cards and len(cards) >= LEASES_MAX:
+        return False, 'card cap'
+    cards[label] = m
+    mark_dirty()
+    return True, 'stored'
+
 def backfill():
     # SYNC ON JOIN. bootstrap() learns the peer list but pulls no content, so a freshly launched
     # relay used to come up blank and only accumulate what was pushed to it AFTER joining — it never
@@ -1083,7 +1121,7 @@ def blob_credit(cid, payhash):
 # (in-memory before this meant comments, uploaded media, likes, poll votes vanished on restart)
 _STATE_KEYS = ('engage', 'notifs', 'supporters', 'follows', 'comments',   # blobs now live in SQLite
                'releases', 'profiles', 'dmkeys', 'pollvotes', 'reports', 'pinned', 'pins_paid',
-               'tips_paid', 'revocations', 'scores', 'games_dir', 'anchors', 'leases')
+               'tips_paid', 'revocations', 'scores', 'games_dir', 'anchors', 'leases', 'cards')
 # DMs are persisted SEPARATELY (not via the generic loop above): on disk they stay a FLAT `dms` list in
 # arrival order — so an OLDER relay can still read a store this one writes — and load() re-buckets them.
 
@@ -1858,6 +1896,19 @@ class H(BaseHTTPRequestHandler):
             # chain on write; the client still re-resolves it (same trust model as /releases).
             aid = qs(self.path).get('id', '')
             self._send(200, json.dumps({'anchor': aid, 'log': anchors.get(aid, [])}))
+        elif self.path.startswith('/leases'):
+            # DIRECTORY for page discovery: every winning (first-claim) lease this
+            # relay holds. Each was verified at the door; the client STILL resolves
+            # and verifies every page it opens. Newest first, capped.
+            def _lease_item(lb, lv):
+                c = cards.get(lb) or {}                   # signed page card for this leased name, if any
+                return {'label': lb, 'anchor': (lv or {}).get('anchor', ''),
+                        'ts': int((lv or {}).get('ts', 0)),
+                        'title': c.get('title', ''), 'description': c.get('description', ''),
+                        'tags': c.get('tags', '')}
+            items = [_lease_item(lb, lv) for lb, lv in leases.items() if isinstance(lv, dict)]
+            items.sort(key=lambda r: r['ts'], reverse=True)
+            self._send(200, json.dumps({'ok': True, 'leases': items[:500]}))
         elif self.path.startswith('/lease'):
             # The winning (first valid) lease for a label, if any.
             label = qs(self.path).get('label', '')
@@ -2146,6 +2197,15 @@ class H(BaseHTTPRequestHandler):
             # tampered log never enters. Newest-valid-longest wins (see accept_anchor).
             try:
                 ok, info = accept_anchor(json.loads(raw or '{}'))
+                self._send(200 if ok else 400, json.dumps({'ok': ok, 'info': info}))
+            except Exception as e:
+                self._send(400, json.dumps({'ok': False, 'error': str(e)}))
+        elif self.path.startswith('/card'):
+            # Signed page card (title/description/tags for discovery). VERIFIED here (root-authorised +
+            # signature + must own the leased name). Newest ts wins. MUST precede the '/lease' branch? No —
+            # startswith('/card') and startswith('/lease') are disjoint prefixes, so order is irrelevant.
+            try:
+                ok, info = accept_card(json.loads(raw or '{}'))
                 self._send(200 if ok else 400, json.dumps({'ok': ok, 'info': info}))
             except Exception as e:
                 self._send(400, json.dumps({'ok': False, 'error': str(e)}))
