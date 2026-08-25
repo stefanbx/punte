@@ -233,11 +233,11 @@ class _AnchoredPublishScreenState extends State<AnchoredPublishScreen> {
               autocorrect: false,
               style: const TextStyle(
                   color: kText, fontSize: 13, fontFamily: 'monospace', height: 1.4),
-              decoration: _dec('a Tipar program: import "ui.kl" + view(state) / update(state, event)'),
+              decoration: _dec('an Octad program: import "ui.kl" + view(state) / update(state, event)'),
             ),
             const SizedBox(height: 6),
             const Text(
-              'A pure Tipar page (view + update, no I/O). It is checked against the sandboxed runtime before '
+              'A pure Octad page (view + update, no I/O). It is checked against the sandboxed runtime before '
               'the name is claimed.',
               style: TextStyle(color: kDim, fontSize: 12),
             ),
