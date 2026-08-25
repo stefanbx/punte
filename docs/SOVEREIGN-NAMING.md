@@ -59,22 +59,74 @@ Each item is a concrete, implementable defense. Tagged by where it lives: **[bro
   publish tool and re‑checked in `accept_lease`. Shrinks the homograph surface without deciding *who* owns
   a name. **Back‑compat:** existing leases are grandfathered; policy applies to new claims.
 
-### P3 — the fork / global‑uniqueness problem (the hard one)
-No fully‑sovereign design gives global, authority‑free, unique human names. Offer a layered answer:
+### P3 — ownership: the paid‑subscription registrar (CHOSEN MODEL, 2026‑08‑25)
 
-- **[relay] Surface disagreement, never hide it.** When the browser resolves a name, it queries *multiple*
-  relays; if they return **different anchors** for the same label, show a “name is contested” warning and
-  list the candidates with their fingerprints. A fork becomes visible instead of silently resolving to
-  whichever relay answered first.
-- **[spec] Deterministic tie‑break with anti‑backdate.** Move `accept_lease` from *first‑received* to
-  *earliest‑valid‑ts wins*, where the lease preimage must include a **recent witness** (a recent ledger
-  block hash or a relay‑countersigned receive receipt) so a claimant cannot fabricate an earlier ts than a
-  known‑recent event. This lets independently‑forked relays **converge** on sync instead of diverging.
-  Cost: a weak, bounded witness dependency — documented, not hidden.
-- **[spec, optional] A canonical global namespace as an opt‑in layer.** For those who want one true
-  `alice`, define a registry with real ordering — Harberger‑lease auction or stake‑ranked claim on a chain
-  the client can verify. This is **opt‑in**: the base system stays petname‑first; the registry is just one
-  more verifiable source, never the root of trust.
+The decision on "who owns a name, and how is a second claimant kept out": **a name is a paid, renewable
+subscription, and the Nano ledger — not any relay — is the ownership authority.** This is the DNS‑registrar
+model, made sovereign: the on‑chain payment is a globally‑verifiable, unforgeable ordering, so forks can't
+persist and a name can't be stolen while its subscription is live; and because ownership lives on the
+ledger (not in a relay), a relay going down never costs you your name.
+
+**Registration / renewal.** To claim or renew `shop`, the owner publishes a lease record that cites one or
+more **on‑chain payment blocks** — a Nano send from the owner split across the serving relays' accounts for
+the current period. The lease canon binds `label, anchor, period_start, period_end (= start + PERIOD),
+payment_block_hashes`, signed by the anchor root key. Any relay AND the client verify: signature ok; the
+cited blocks are CONFIRMED sends of ≥ the required share to the required relay accounts, dated within the
+period. This reuses the existing on‑chain verification already used for pay‑to‑pin (`grant_pin`) —
+confirmed, correct subtype, correct destination, consumed once.
+
+**Ownership + conflict resolution (solves the same‑name collision).**
+- A label is owned by the anchor whose subscription is **currently active** (`now < period_end`).
+- Two competing claims → the one backed by the **earlier confirmed payment** wins. Confirmation order is on
+  the ledger, so every relay and client computes the same winner; the later claimant's lease is rejected
+  while an active one exists. A fork can't survive: a relay that briefly accepted Bob re‑checks the ledger,
+  sees Alice's earlier active payment, and drops Bob's as invalid. **Convergence is forced by the chain.**
+- Squatting is bounded by cost — every name (and every renewal) is a real payment.
+
+**Expiry → notice → grace → reclaim (the lifecycle).**
+- Within `RENEW_WINDOW` of `period_end`, relays send the owner a **renewal notice** — a Knot message,
+  surfaced by the browser's mail agent (see Unified client below).
+- At `period_end`, a `GRACE` period starts: the name still resolves but is flagged *expiring*, with more
+  notices.
+- After `period_end + GRACE` with no renewal, the name is **reclaimable** — a new claimant may register it
+  with a fresh subscription (DNS‑style drop). The lapsed owner has lost it.
+
+**Availability — "what if a relay goes down?" (answered).** Ownership does not depend on any single relay:
+it is proven on the ledger, and the lease + payment references replicate to every relay via `backfill()`.
+A downed relay changes nothing — other relays serve the same name and honour the same on‑chain ownership.
+The payment is **split across K relay accounts**, so many relays are paid to carry the name → redundancy by
+incentive, no single point of failure, and renewals can be paid to whichever relays are live.
+
+**Parameters (tunable defaults).** `PERIOD` = 1 year · `PRICE` = small, per name · split across the top‑K
+relay accounts · `RENEW_WINDOW` = 30 days · `GRACE` = 30 days · min confirmations before a payment counts.
+Recommended: **per‑relay payments, no central registry account** (a central account would be a rug/SPOF);
+the lease cites one payment block per relay share, each independently verifiable against a known relay
+account.
+
+**Why this is still sovereign.** The relay never decides ownership — it only *checks the ledger* and serves.
+The authority is the chain, which anyone can read; the relay can fail to serve or lie, but a client
+verifies the payments itself, so a lying relay is caught. No CA, no central root, no external service.
+
+**Build order for this model:** (1) relay: paid‑lease verification (`paid_until`, cite+verify payment
+blocks, reject a later claim over an active sub) reusing the pay‑to‑pin machinery; (2) client: verify the
+payment + show `paid_until`/owner fingerprint, plus the P0 TOFU pin as the belt‑and‑braces user protection;
+(3) renewal notices over Knot messages; (4) expiry/grace/reclaim state machine; (5) split‑payment settlement
+across relay accounts. Keep P0 (TOFU + fingerprint) regardless — it protects users during the transition and
+against any relay that misreports the ledger.
+
+## Unified client — browser + mail + IDE, one key
+
+Direction (2026‑08‑25): the app is not just a browser. It is one sovereign client with three faces over a
+single identity key:
+- **Browser** — resolve, verify, and render sovereign pages (done).
+- **Mail agent** — the user's messages, built on Knot's existing signed DMs. System notices (renewal
+  reminders, expiry warnings, "your name is contested") arrive here. This is also how the registrar reaches
+  a name's owner.
+- **IDE / publisher** — author Keel pages, publish under a name, share files, and serve services from the
+  local node (done: Publish panel + `xc_node.py`).
+
+One identity signs pages, receives mail, and owns names — so "email me to renew" and "verify who owns this
+page" are the same key. The mail agent is the natural carrier for the registrar's renewal lifecycle above.
 
 ## Non‑negotiable invariants (so fixes don't undo the model)
 - The relay is **never** an authority. Every naming answer is verified on device; a relay can fail to
@@ -90,6 +142,12 @@ No fully‑sovereign design gives global, authority‑free, unique human names. 
 - The self‑certifying layer (addresses = keys) is complete and correct.
 
 ## Suggested order of work
-P0 (key display + TOFU) → P1 (key‑bearing links + petnames) → P2 (confusable warning + label policy) →
-P3 (fork surfacing, then the ts/witness tie‑break, then the optional registry). P0 delivers most of the
-real‑world protection for the least code.
+Ownership model is now decided (P3 = paid‑subscription registrar). Recommended sequence:
+1. **P0 client safety first** (key fingerprint + TOFU pin + multi‑relay "contested" check) — small, and it
+   protects users during the whole registrar build and against any relay that misreports the ledger.
+2. **Registrar core** — relay paid‑lease verification (`paid_until`, cite+verify on‑chain payments, reject a
+   later claim over an active subscription) reusing the pay‑to‑pin machinery; client verifies the payment
+   and shows `paid_until` + owner fingerprint.
+3. **Lifecycle** — renewal notices over Knot mail, then expiry/grace/reclaim.
+4. **Split‑payment settlement** across relay accounts.
+5. **P1/P2 polish** — key‑bearing links, petnames, confusable + label policy.
