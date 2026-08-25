@@ -1025,6 +1025,26 @@ def backfill():
             continue
         for m in d.get('records', []):
             accept_release(m)                         # verify (publisher-pinned sig) + store + pull bytes
+    # --- leases: the page directory. Re-verified here (accept_lease checks the root sig), first-valid-
+    # claim-per-label wins, so a peer can only fail to serve, never overwrite a name we already hold. An
+    # older peer without /leases_full just 404s → caught → skipped (backward compatible). ---
+    for r in peers:
+        try:
+            d = json.loads(urllib.request.urlopen(r + '/leases_full', timeout=8).read())
+        except Exception:
+            continue
+        for m in d.get('leases', []):
+            accept_lease(m)
+    # --- cards: page metadata for search. MUST run AFTER the lease loop above — accept_card refuses a
+    # card whose leased name we don't yet hold — and every card is re-verified (root sig + ownership),
+    # newest-ts wins. ---
+    for r in peers:
+        try:
+            d = json.loads(urllib.request.urlopen(r + '/cards_full', timeout=8).read())
+        except Exception:
+            continue
+        for m in d.get('cards', []):
+            accept_card(m)
     mark_dirty()                                      # persist the caught-up state
 
 def grant_pin(cid, payhash):
@@ -1896,6 +1916,15 @@ class H(BaseHTTPRequestHandler):
             # chain on write; the client still re-resolves it (same trust model as /releases).
             aid = qs(self.path).get('id', '')
             self._send(200, json.dumps({'anchor': aid, 'log': anchors.get(aid, [])}))
+        elif self.path.startswith('/leases_full'):
+            # BULK export of the FULL signed lease objects (with pub/sig), for peer backfill — a joining
+            # relay pulls these and re-verifies each via accept_lease. The client-facing /leases directory
+            # strips signatures; this keeps them so a peer can prove what it stores. Checked before the
+            # '/leases' prefix so it isn't swallowed by the directory branch.
+            self._send(200, json.dumps({'ok': True, 'leases': list(leases.values())}))
+        elif self.path.startswith('/cards_full'):
+            # BULK export of the FULL signed card objects, for peer backfill (re-verified via accept_card).
+            self._send(200, json.dumps({'ok': True, 'cards': list(cards.values())}))
         elif self.path.startswith('/leases'):
             # DIRECTORY for page discovery: every winning (first-claim) lease this
             # relay holds. Each was verified at the door; the client STILL resolves
