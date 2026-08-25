@@ -103,7 +103,7 @@ curl -fsSL https://xchat-alpha-node.fly.dev/relay.sh | sh
 [`relay/install-relay.sh`](relay/install-relay.sh) installs into `~/.xchat-relay`, makes it reachable
 from the internet, and registers it to start at login (launchd / systemd `--user`). With **no flag it
 auto-promotes**: a box with a **public IP becomes a hub** (binds straight to the internet, no external
-service); a box **behind NAT becomes a public mesh node** (reachable through other xchat hubs, no
+service); a box **behind NAT becomes a public mesh node** (reachable through other Knot hubs, no
 external service). The same URL serves the script as plain text, so read it first. `--status` shows
 what's running and the public URL; `--update` upgrades in place; `--uninstall` removes everything.
 
@@ -117,7 +117,7 @@ announced on-chain or pointed at by hand.
 |------|--------------|------------------|------------------|
 | *(none)* | Auto: public IP → hub, behind NAT → public mesh node | None | ✅ (as applicable) |
 | `--hub [addr]` | **Your own public IP/host** — binds direct, announces `http://<ip>:PORT`. The zero-dependency way to run a public hub that fronts NAT'd relays. Open the port in your firewall. | None | ⚠️ HTTP — announce it or add it manually |
-| `--mesh-tunnel` | **No external service and no single point of failure.** Discovers public xchat hubs and is reachable through *all of them at once*; kill one, the others carry it. Private-by-secret. | None | Secret-only |
+| `--mesh-tunnel` | **No external service and no single point of failure.** Discovers public Knot hubs and is reachable through *all of them at once*; kill one, the others carry it. Private-by-secret. | None | Secret-only |
 | `--mesh-tunnel --public` | Same, but hubs **list** it so every app auto-discovers it with no secret. Reached as `<hub>/r/<token>`, so its own IP is never exposed. | None | ✅ |
 | `--tailscale` | Free **permanent** address via Tailscale Funnel (`tailscale up` + enable Funnel first) | Tailscale | ✅ |
 | `--localhost-run` | Free SSH reverse tunnel → short `*.lhr.life` name, no account, no Cloudflare. Register the printed key for a name that never changes. Needs `ssh`. | localhost.run | ✅ |
