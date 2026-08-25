@@ -11,8 +11,8 @@
 //   cd app && flutter test test/dm_ctl_test.dart
 import 'dart:convert';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:knot/main.dart' show DmCtl;
-import 'package:knot/wallet.dart';
+import 'package:punte/main.dart' show DmCtl;
+import 'package:punte/wallet.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();

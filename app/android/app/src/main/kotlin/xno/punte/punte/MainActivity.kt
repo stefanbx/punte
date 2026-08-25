@@ -1,4 +1,4 @@
-package xno.knot.knot
+package xno.punte.punte
 
 import android.view.WindowManager
 import io.flutter.embedding.android.FlutterActivity

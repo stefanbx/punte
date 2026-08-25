@@ -16,7 +16,7 @@
 //
 //   cd app && flutter test test/sealed_sender_test.dart
 import 'package:flutter_test/flutter_test.dart';
-import 'package:knot/wallet.dart';
+import 'package:punte/wallet.dart';
 
 void main() {
   final alice = NanoWallet('a1' * 32);     // the sender

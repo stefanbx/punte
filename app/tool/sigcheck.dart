@@ -2,7 +2,7 @@
 // so the Python node verifier can recompute the same preimage and confirm byte-for-byte agreement.
 // Run: ~/flutter/bin/dart run tool/sigcheck.dart
 import 'dart:convert';
-import 'package:knot/wallet.dart';
+import 'package:punte/wallet.dart';
 
 void main() {
   // any valid 64-hex seed; account is derived deterministically and echoed for the Python side

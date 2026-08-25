@@ -17,7 +17,7 @@ import 'dart:convert';
 import 'dart:typed_data';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:pinenacl/x25519.dart' as pnacl;
-import 'package:knot/wallet.dart';
+import 'package:punte/wallet.dart';
 
 String _hex(List<int> b) => b.map((x) => x.toRadixString(16).padLeft(2, '0')).join();
 Uint8List _bytes(String s) =>

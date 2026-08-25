@@ -9,7 +9,7 @@
 //   cd app && flutter test test/html_body_test.dart
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:knot/main.dart';
+import 'package:punte/main.dart';
 
 Future<void> _pump(WidgetTester t, String html) async {
   await t.pumpWidget(MaterialApp(

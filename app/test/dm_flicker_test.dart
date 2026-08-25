@@ -17,8 +17,8 @@
 //   cd app && flutter test test/dm_flicker_test.dart
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:knot/main.dart' show Api, DmStore, gWallet;
-import 'package:knot/wallet.dart';
+import 'package:punte/main.dart' show Api, DmStore, gWallet;
+import 'package:punte/wallet.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();

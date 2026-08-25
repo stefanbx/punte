@@ -12,8 +12,8 @@ import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
-import 'package:knot/anchor.dart';
-import 'package:knot/wallet.dart';
+import 'package:punte/anchor.dart';
+import 'package:punte/wallet.dart';
 
 const _counterAnchor = 'nano_1oecy7393u7g79wnun9i99c1fxum8kzg41xus9pr5kuzer7rbkehb5oj4yge';
 const _counterCid =

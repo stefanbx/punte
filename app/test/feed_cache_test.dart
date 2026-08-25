@@ -9,7 +9,7 @@
 //   cd app && flutter test test/feed_cache_test.dart
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:knot/main.dart' show Api, Post;
+import 'package:punte/main.dart' show Api, Post;
 
 Post _p(String id, int ts,
         {String kind = 'post', String text = 'hi', String? media, String? replyTo, List<String>? poll}) =>

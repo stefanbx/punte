@@ -1,6 +1,6 @@
 // INTEROP HARNESS — the app half, standing in for a phone.
 //
-// It imports the SHIPPED wallet (package:knot/wallet.dart), not a copy of it, so what this signs is
+// It imports the SHIPPED wallet (package:punte/wallet.dart), not a copy of it, so what this signs is
 // exactly what the app signs. Two modes:
 //
 //   dart run bin/interop_sign.dart battery <seedhex>
@@ -13,7 +13,7 @@
 //       on-device Dart signatures in it rather than a Python imitation of them.
 import 'dart:convert';
 import 'dart:io';
-import 'package:knot/wallet.dart';
+import 'package:punte/wallet.dart';
 
 void battery(NanoWallet w) {
   const ts = 1700000000;

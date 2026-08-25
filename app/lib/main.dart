@@ -1,4 +1,4 @@
-// Knot — a censorship-free X. The "Ӿ" is the XNO (Nano) symbol.
+// Punte — a censorship-free X. The "Ӿ" is the XNO (Nano) symbol.
 // Identity = a Nano keypair. Feed = read from the ledger. Tips = feeless Nano.
 // Backend = the Keel engine (same censorship-free stack as KeelTube).
 import 'dart:async';
@@ -211,15 +211,15 @@ void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await _loadEndpoints();                              // persisted last-good endpoint + failover list
   await MeshReach.load();                              // rendezvous secret + hubs for reaching a NAT'd node
-  runApp(const KnotApp());
+  runApp(const PunteApp());
 }
 
-class KnotApp extends StatelessWidget {
-  const KnotApp({super.key});
+class PunteApp extends StatelessWidget {
+  const PunteApp({super.key});
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Knot',
+      title: 'Punte',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         useMaterial3: true,
@@ -996,7 +996,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
   Widget _brand() => Column(children: const [
         NanoMark(size: 64),
         SizedBox(height: 14),
-        Text('Knot',
+        Text('Punte',
             style: TextStyle(color: kText, fontWeight: FontWeight.w800, fontSize: 28)),
         SizedBox(height: 6),
         Text('a censorship-free X. your account is a Nano keypair — no email, no server.',
@@ -1032,7 +1032,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
               const SizedBox(width: 9),
               Expanded(
                 child: Text(
-                    'You are using Knot in a browser. Your seed is kept in this browser\'s storage, '
+                    'You are using Punte in a browser. Your seed is kept in this browser\'s storage, '
                     'which is weaker than the phone app\'s keystore — and this page is served by whoever '
                     'runs this node. For an account holding real value, prefer the Android app, or use a '
                     'seed here that you are willing to treat as disposable.',
@@ -1135,7 +1135,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
             padding: const EdgeInsets.only(top: 4),
             child: Text(_verr!, style: const TextStyle(color: Color(0xFFEF6C9B), fontSize: 13))),
         const Spacer(),
-        _bigBtn(_busy ? 'Setting up…' : 'Confirm & enter Knot', kAccent, Colors.black, _busy ? null : () {
+        _bigBtn(_busy ? 'Setting up…' : 'Confirm & enter Punte', kAccent, Colors.black, _busy ? null : () {
           for (int i = 0; i < _vpos.length; i++) {
             if (_vctl[i].text.trim().toLowerCase() != _newSeed[_vpos[i]].toLowerCase()) {
               setState(() => _verr = "That doesn't match your seed. Check your written copy (or go back to view it again).");
@@ -7051,7 +7051,7 @@ class _FeedScreenState extends State<FeedScreen> with WidgetsBindingObserver {
           if (res.type != ResultType.done && mounted) {
             ScaffoldMessenger.of(context).showSnackBar(SnackBar(
                 backgroundColor: kCard,
-                content: Text('Couldn’t open the installer (${res.message}). Allow “Install unknown apps” for Knot, then tap Install again.')));
+                content: Text('Couldn’t open the installer (${res.message}). Allow “Install unknown apps” for Punte, then tap Install again.')));
           }
         }
 
@@ -7612,7 +7612,7 @@ class _FeedScreenState extends State<FeedScreen> with WidgetsBindingObserver {
           icon: AuthorAvatar(account: _account, handle: _handle, radius: 15),
         ),
         titleSpacing: 0,
-        title: const Text('Knot',
+        title: const Text('Punte',
             style: TextStyle(color: kText, fontWeight: FontWeight.w800, fontSize: 18)),
         actions: [
           // encrypted direct messages
@@ -11799,7 +11799,7 @@ class _PostCardState extends State<PostCard> {
             onTap: () {
               Navigator.pop(context);
               final p = widget.post;
-              Share.share('@${p.handle}: ${p.text}\n\nvia Knot');
+              Share.share('@${p.handle}: ${p.text}\n\nvia Punte');
             },
           ),
           ListTile(

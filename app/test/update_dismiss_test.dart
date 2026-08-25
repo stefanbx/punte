@@ -10,7 +10,7 @@
 //   cd app && flutter test test/update_dismiss_test.dart
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:knot/main.dart' show UpdateDismiss;
+import 'package:punte/main.dart' show UpdateDismiss;
 
 const _k = 'xchat_update_dismissed';
 int _now() => DateTime.now().millisecondsSinceEpoch ~/ 1000;

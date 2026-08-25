@@ -18,7 +18,7 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:knot/main.dart';
+import 'package:punte/main.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();

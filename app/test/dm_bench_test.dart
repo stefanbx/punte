@@ -2,8 +2,8 @@
 // 500-message history before and after") is checked rather than asserted.
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:knot/main.dart' show DmStore;
-import 'package:knot/wallet.dart';
+import 'package:punte/main.dart' show DmStore;
+import 'package:punte/wallet.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();

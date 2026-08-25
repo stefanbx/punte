@@ -6,8 +6,8 @@
 //   flutter test --platform chrome test/ed25519_blake2b_web_test.dart
 import 'dart:typed_data';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:knot/crypto/ed25519_blake2b.dart' as web;
-import 'package:knot/wallet.dart';
+import 'package:punte/crypto/ed25519_blake2b.dart' as web;
+import 'package:punte/wallet.dart';
 
 // [secret, message, expected public key, expected signature] — all hex.
 const List<List<String>> vectors = [

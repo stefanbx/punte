@@ -4,7 +4,7 @@
     "title": "Ӿnake",
     "file": "xno_snake.html",
     "cid": "sha256-5a03f91019fc85ee6239fb19a63e06ed0eda53cebc0d85e0c9e0ec48aa123b1d",
-    "author": "Knot",
+    "author": "Punte",
     "icon": "🐍"
   },
   {
@@ -12,7 +12,7 @@
     "title": "Ӿ Stack",
     "file": "stack.html",
     "cid": "sha256-276d5f99bc7fb9852c10341dc7fbc69346b4022281e5b75ec53d4e0f1e6cccc2",
-    "author": "Knot",
+    "author": "Punte",
     "icon": "🧱"
   },
   {
@@ -20,7 +20,7 @@
     "title": "Ӿ Catch",
     "file": "catch.html",
     "cid": "sha256-b76a8f52a9b2780c21047274483561cf903bb61f9498ec762f16377f1f92d31e",
-    "author": "Knot",
+    "author": "Punte",
     "icon": "🧺"
   }
 ]

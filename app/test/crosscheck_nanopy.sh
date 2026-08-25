@@ -20,7 +20,7 @@ import 'dart:io';
 import 'dart:math';
 import 'dart:typed_data';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:knot/crypto/ed25519_blake2b.dart' as web;
+import 'package:punte/crypto/ed25519_blake2b.dart' as web;
 
 void main() {
   test('emit vectors', () {

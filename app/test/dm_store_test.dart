@@ -17,8 +17,8 @@
 import 'dart:convert';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:knot/main.dart' show DmStore;
-import 'package:knot/wallet.dart';
+import 'package:punte/main.dart' show DmStore;
+import 'package:punte/wallet.dart';
 
 const _secret = 'the numbers are 4 8 15 16 23 42';
 

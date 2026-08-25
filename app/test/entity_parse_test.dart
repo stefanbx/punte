@@ -14,7 +14,7 @@
 //
 //   cd app && flutter test test/entity_parse_test.dart
 import 'package:flutter_test/flutter_test.dart';
-import 'package:knot/body.dart';
+import 'package:punte/body.dart';
 
 /// Just the marked-up pieces, in order — what a reader would see rendered differently from prose.
 List<String> entities(String s) => scanBody(s)
