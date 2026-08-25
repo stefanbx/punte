@@ -2003,6 +2003,14 @@ class H(BaseHTTPRequestHandler):
             urls = fresh_providers(cid)
             self._send(200, json.dumps({'cid': cid, 'providers': urls,
                                         'cached_here': blob_has(cid)}))
+        elif self.path.startswith('/price'):
+            # REGISTRAR fee, set by THIS relay's operator (XC_NAME_PRICE_RAW). The client reads each
+            # relay's price and pays it to that relay's account — so the fee is operator-settable and
+            # competition-driven (pay the cheaper live relays); richer schemes (median, market) layer on
+            # top later. `account` is where to send this relay's share.
+            self._send(200, json.dumps({'account': RELAY_ACCT, 'price_raw': str(xc.NAME_PRICE_RAW) if xc else '0',
+                                        'period_s': xc.NAME_PERIOD_S if xc else 0,
+                                        'grace_s': xc.NAME_GRACE_S if xc else 0}))
         elif self.path.startswith('/haveblob'):
             cid = qs(self.path).get('cid', '')
             self._send(200, json.dumps({'cid': cid, 'have': blob_has(cid),
