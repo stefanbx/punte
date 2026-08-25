@@ -83,6 +83,24 @@ confirmed, correct subtype, correct destination, consumed once.
   sees Alice's earlier active payment, and drops Bob's as invalid. **Convergence is forced by the chain.**
 - Squatting is bounded by cost — every name (and every renewal) is a real payment.
 
+**Dormant / unused domains (recurring fee, not one‑time).** A one‑time payment would let a squatter park a
+name forever. The fee is a **recurring subscription**, so a dormant owner who stops paying lets the name
+expire → grace → become reclaimable (below). The recurring fee is the *holding cost* that makes idle names
+expensive to hoard and returns unused ones to the pool. (Harberger self‑assessed tax — declare a price, pay
+a % of it, anyone may buy at that price — is a more aggressive anti‑squat variant to consider; flat
+recurring + expiry is the understandable default.)
+
+**Where the money goes — relays, not a burn.** The fee is **revenue to the relays** that store and serve
+the name and its content — it funds the system running, and aligns incentives (relays earn by carrying
+names). It is split across the K relays a registration names, so many relays are paid to keep each name
+alive.
+
+**Relay‑down resilience (concrete rule).** Verification sums confirmed sends to **any known relay account**
+and requires the total ≥ price. So the payer pays whichever relays are **live**; a down or vanished relay
+neither blocks registration/renewal nor can withhold a name (ownership is on‑chain and the lease replicates
+to every relay via `backfill()`). A Nano account can receive while its relay server is offline, so even a
+temporarily‑down relay still collects its share and serves once back.
+
 **Expiry → notice → grace → reclaim (the lifecycle).**
 - Within `RENEW_WINDOW` of `period_end`, relays send the owner a **renewal notice** — a Knot message,
   surfaced by the browser's mail agent (see Unified client below).
@@ -102,6 +120,20 @@ relay accounts · `RENEW_WINDOW` = 30 days · `GRACE` = 30 days · min confirmat
 Recommended: **per‑relay payments, no central registry account** (a central account would be a rug/SPOF);
 the lease cites one payment block per relay share, each independently verifiable against a known relay
 account.
+
+**Anonymity of the payment (must not de‑anonymize owners).** A naive design — pay for `shop` from your
+main wallet — publishes a `funding‑account → domain` link on the public ledger forever. The registrar is
+built to avoid that:
+- **The payer is NOT the anchor.** Ownership is proven by the anchor's *signature* on the lease; the payment
+  only has to be a confirmed send of the right amount to the relay accounts. So the money can come from ANY
+  account — never require, or assume, that the payer equals the anchor.
+- **Pay from a fresh, unlinked account** (funded via a fresh receive) per domain / per renewal, so the trail
+  reads "some throwaway account paid," not "your identity paid." The client should make a fresh payer the
+  default.
+- **Residual, stated plainly:** the lease cites the payment block, so `lease → payment → payer` is a public
+  link; strong anonymity is the owner's choice of how they fund. A future blind/zk payment proof could
+  remove even this. Serving anonymity is separate: the tunnel hides the anchor account from entries (routing
+  by ephemeral token), but not the node's IP or a visitor's IP+cid — that needs the Layer‑B mix hop.
 
 **Why this is still sovereign.** The relay never decides ownership — it only *checks the ledger* and serves.
 The authority is the chain, which anyone can read; the relay can fail to serve or lie, but a client

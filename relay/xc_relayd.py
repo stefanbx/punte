@@ -481,6 +481,7 @@ PIN_DAYS_PER_XNO = float(os.environ.get('XC_PIN_DAYS_PER_XNO', '30000'))       #
 _PIN_S_PER_RAW = PIN_DAYS_PER_XNO * 86400.0 / 1e30
 pinned = {}                          # cid -> pin-expiry epoch (paid); survives eviction until then
 pins_paid = {}                       # payment block hash -> cid (consumed once; audit + no double-claim)
+name_pays_used = {}                   # payment block hash -> label (a name-subscription payment, spent once)
 blob_meta = {}                       # cid -> {'size','last','tips','reports'} — small RAM eviction index
 
 # Moderation as a NEGATIVE value signal. A signed community report cancels some of a post's tip-value,
@@ -1030,6 +1031,88 @@ def accept_provide(m):
     mark_dirty()
     return True, 'stored'
 
+def _known_relay_accounts():
+    # Accounts a name-subscription payment may be sent to: THIS relay plus every peer relay we know. The
+    # payer pays whichever relays are live and we sum confirmed sends to ANY of them — so a down relay
+    # neither blocks a registration nor can withhold a name (relay-down resilience).
+    accts = set(peers_by_acct.keys())
+    if RELAY_ACCT:
+        accts.add(RELAY_ACCT)
+    return accts
+
+def accept_paid_lease(m):
+    # The REGISTRAR path: a PAID subscription lease. Ownership = an active subscription proven by on-chain
+    # payment TO THE RELAYS (revenue that funds serving, not a burn); the ANCHOR signs it (the payer need
+    # not be the anchor — a privacy property). Steps: (1) root signature over paid_lease_canon; (2) the
+    # ownership decision (collision/renew/grace/reclaim, pure in xc_common); (3) verify payments — each
+    # cited block is a CONFIRMED send to a known relay account, consumed once — sum to subscription time.
+    # Every relay verifies the ledger INDEPENDENTLY, so a lying relay is caught and forks can't persist.
+    # NOTE: a paid lease supersedes a legacy FREE lease (the registrar is the authority going forward).
+    # Returns (accepted, info).
+    if xc is None:
+        return False, 'crypto unavailable'
+    if not isinstance(m, dict):
+        return False, 'bad body'
+    label, anchor = m.get('label', ''), m.get('anchor', '')
+    pub, sig = m.get('pub', ''), m.get('sig', '')
+    pays = m.get('payments') or []
+    if not label or not anchor or not pub or not sig:
+        return False, 'missing fields'
+    if not isinstance(pays, list) or not pays:
+        return False, 'no payments cited'
+    try:
+        if xc.pub_to_addr(pub) != anchor:
+            return False, 'lease not signed by the anchor root key'
+        if not xc.verify_msg(pub, xc.paid_lease_canon(m), sig):
+            return False, 'bad lease signature'
+    except Exception as ex:
+        return False, str(ex)
+    now = time.time()
+    cur = leases.get(label)
+    allowed, why = xc.paid_lease_decision(cur, anchor, now)
+    if not allowed:
+        return False, why
+    known = _known_relay_accounts()
+    if not known:
+        return False, 'relay has no account to receive payment'
+    total, fresh = 0, []
+    for h in pays:
+        if not isinstance(h, str) or not h or h in name_pays_used:
+            continue                                     # malformed, or already spent (never double-count)
+        try:
+            bi = xc.rpc({'action': 'block_info', 'json_block': 'true', 'hash': h})
+        except Exception:
+            continue
+        amt = 0
+        for acct in known:
+            amt = xc.confirmed_send_raw(bi, acct)
+            if amt:
+                break
+        if amt:
+            total += amt
+            fresh.append(h)
+    if total <= 0:
+        # idempotent: the owner already holds this exact active record (e.g. a backfill re-post)
+        if isinstance(cur, dict) and cur.get('anchor') == anchor and cur.get('paid_until'):
+            return True, 'already active'
+        return False, 'no confirmed payment to a relay account'
+    granted = xc.subscription_seconds(total)
+    if granted <= 0:
+        return False, 'payment below minimum'
+    base = now
+    if isinstance(cur, dict) and cur.get('anchor') == anchor:
+        base = max(now, float(cur.get('paid_until', 0)))  # renewal extends from the current end, not now
+    paid_until = base + granted
+    for h in fresh:
+        name_pays_used[h] = label
+    leases[label] = {'label': label, 'anchor': anchor, 'pub': pub, 'sig': sig, 'paid': True,
+                     'payments': pays, 'ts': int(m.get('ts', now)),
+                     'period_start': m.get('period_start', ''), 'period_end': m.get('period_end', ''),
+                     'paid_until': paid_until}
+    _cap_dict(leases, LEASES_MAX)
+    mark_dirty()
+    return True, 'paid until %d' % int(paid_until)
+
 def fresh_providers(cid):
     # The still-fresh provider URLs for a cid, newest-first. Prunes anything past PROVIDER_TTL as a
     # side effect so a directory of dead home boxes never accumulates.
@@ -1089,7 +1172,13 @@ def backfill():
         except Exception:
             continue
         for m in d.get('leases', []):
-            accept_lease(m)
+            # a PAID lease is signed over paid_lease_canon + carries payments; route it to the registrar
+            # path so this relay re-verifies the on-chain payment itself. Legacy free leases take the
+            # first-claim path. Both live in the same `leases` dict.
+            if isinstance(m, dict) and (m.get('paid') or m.get('payments')):
+                accept_paid_lease(m)
+            else:
+                accept_lease(m)
     # --- cards: page metadata for search. MUST run AFTER the lease loop above — accept_card refuses a
     # card whose leased name we don't yet hold — and every card is re-verified (root sig + ownership),
     # newest-ts wins. ---
@@ -1197,7 +1286,7 @@ def blob_credit(cid, payhash):
 _STATE_KEYS = ('engage', 'notifs', 'supporters', 'follows', 'comments',   # blobs now live in SQLite
                'releases', 'profiles', 'dmkeys', 'pollvotes', 'reports', 'pinned', 'pins_paid',
                'tips_paid', 'revocations', 'scores', 'games_dir', 'anchors', 'leases', 'cards',
-               'providers')
+               'providers', 'name_pays_used')
 # DMs are persisted SEPARATELY (not via the generic loop above): on disk they stay a FLAT `dms` list in
 # arrival order — so an OLDER relay can still read a store this one writes — and load() re-buckets them.
 
@@ -1997,6 +2086,8 @@ class H(BaseHTTPRequestHandler):
                 c = cards.get(lb) or {}                   # signed page card for this leased name, if any
                 return {'label': lb, 'anchor': (lv or {}).get('anchor', ''),
                         'ts': int((lv or {}).get('ts', 0)),
+                        'paid': bool((lv or {}).get('paid')),          # registrar: is this a paid subscription?
+                        'paid_until': int((lv or {}).get('paid_until', 0)),  # 0 = free/legacy lease
                         'title': c.get('title', ''), 'description': c.get('description', ''),
                         'tags': c.get('tags', '')}
             items = [_lease_item(lb, lv) for lb, lv in leases.items() if isinstance(lv, dict)]
@@ -2299,6 +2390,15 @@ class H(BaseHTTPRequestHandler):
             # security boundary, not who registered the hint. Nodes re-POST this on a heartbeat.
             try:
                 ok, info = accept_provide(json.loads(raw or '{}'))
+                self._send(200 if ok else 400, json.dumps({'ok': ok, 'info': info}))
+            except Exception as e:
+                self._send(400, json.dumps({'ok': False, 'error': str(e)}))
+        elif self.path.startswith('/paidlease'):
+            # REGISTRAR: a PAID subscription lease. VERIFIED here — root signature, ownership decision
+            # (collision/renew/grace/reclaim), and on-chain payment(s) to relay account(s). See
+            # accept_paid_lease. Must precede '/lease' (a prefix of neither, but be explicit).
+            try:
+                ok, info = accept_paid_lease(json.loads(raw or '{}'))
                 self._send(200 if ok else 400, json.dumps({'ok': ok, 'info': info}))
             except Exception as e:
                 self._send(400, json.dumps({'ok': False, 'error': str(e)}))
