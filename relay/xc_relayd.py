@@ -7,7 +7,7 @@ import json, sys, os, time, threading, sqlite3, urllib.request, random, hashlib,
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import urlparse, parse_qs
+from urllib.parse import urlparse, parse_qs, quote
 import importlib.util
 xc = None                                       # xc_common: relay account + pay-to-pin ledger reads
 _here = os.path.dirname(os.path.abspath(__file__))
@@ -1019,12 +1019,48 @@ def accept_card(m):
     mark_dirty()
     return True, 'stored'
 
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    # A public URL that 302s to http://127.0.0.1 or http://169.254.169.254 would defeat the SSRF check, so
+    # we refuse to follow ANY redirect during proof-of-possession.
+    def redirect_request(self, *a, **k):
+        return None
+
+_POSSESSION_OPENER = urllib.request.build_opener(_NoRedirect())
+
+def _provider_serves_cid(cid, url):
+    # PROOF-OF-POSSESSION (FINDING [5]). Before a NEW (cid,url) provider claim is stored, WE fetch it and
+    # confirm the url actually serves the sha256 bytes for cid — so a bogus url can't be registered to
+    # steer every resolver of cid to an attacker box (IP + cid leak) or evict the real provider off the
+    # PROVIDER_URLS_MAX list. Guarded against becoming an SSRF/DoS lever: the host must resolve to a PUBLIC
+    # ip (xc.is_public_http_url — blocks loopback/private/link-local incl. 169.254.169.254 metadata), we
+    # follow NO redirects, use an 8s timeout, and cap the body at MAX_BLOB. Residual (accepted): a per-op
+    # timeout doesn't bound a slow drip, and DNS rebinding after the check — both only cost this relay a
+    # bounded read, never a forged page (the resolver still hash-checks). Wire shape matches GET /blob.
+    if not cid.startswith('sha256-'):
+        return False                                 # only sha256 cids are self-verifiable stdlib-only
+    if xc is None or not xc.is_public_http_url(url):
+        return False                                 # SSRF guard: refuse non-public / non-http targets
+    want = cid.split('sha256-', 1)[1]
+    fetch = url + ('&' if '?' in url else '?') + 'cid=' + quote(cid, safe='')
+    try:
+        resp = _POSSESSION_OPENER.open(fetch, timeout=8)
+        raw = resp.read(MAX_BLOB + 1)                # cap: reject anything larger than a max blob
+        if len(raw) > MAX_BLOB:
+            return False
+        b64 = (json.loads(raw) or {}).get('b64') or ''
+        data = base64.b64decode(b64, validate=False)
+        return hashlib.sha256(data).hexdigest() == want
+    except Exception:
+        return False
+
 def accept_provide(m):
-    # Register a PROVIDER: "the bytes for content <cid> can be fetched at <url>". Unauthenticated on
-    # purpose — like /blob — because content is address-by-hash: whoever fetches re-checks sha256(bytes)
-    # ==cid, so a bogus url only costs a failed fetch, never a forged page. We only sanity-check shape,
-    # then stamp it with a fresh timestamp (freshness window in /providers drops stale ones). Returns
-    # (accepted, info).
+    # Register a PROVIDER: "the bytes for content <cid> can be fetched at <url>". A resolver that fetches
+    # re-checks sha256(bytes)==cid, so a bogus url can never yield a forged page — BUT an unauthenticated
+    # claim still steers every resolver to an attacker-chosen box (leaking each viewer's IP + the cid) and
+    # can evict the real provider off the PROVIDER_URLS_MAX list. So a NEW (cid,url) pair is stored only
+    # after PROOF-OF-POSSESSION: we fetch it ourselves and confirm it serves the cid's bytes (FINDING [5],
+    # _provider_serves_cid). A refresh of a url already listed for the cid just re-stamps it (no re-fetch).
+    # Returns (accepted, info).
     if not isinstance(m, dict):
         return False, 'bad body'
     cid = str(m.get('cid', ''))
@@ -1035,6 +1071,9 @@ def accept_provide(m):
         return False, 'bad url'
     now = time.time()
     urls = providers.get(cid)
+    is_new = urls is None or url not in urls         # only a not-yet-listed pair needs verification
+    if is_new and not _provider_serves_cid(cid, url):
+        return False, 'provider did not serve the cid'
     if urls is None:
         if len(providers) >= PROVIDERS_MAX:
             _cap_dict(providers, PROVIDERS_MAX)      # oldest-cid backstop
@@ -1063,6 +1102,7 @@ def accept_paid_lease(m):
     # cited block is a CONFIRMED send to a known relay account, consumed once — sum to subscription time.
     # Every relay verifies the ledger INDEPENDENTLY, so a lying relay is caught and forks can't persist.
     # NOTE: a paid lease supersedes a legacy FREE lease (the registrar is the authority going forward).
+    # FINDING [10] (accepted): a relay operator can self-pay for names by sending to its own account — inherent to any paid registry.
     # Returns (accepted, info).
     if xc is None:
         return False, 'crypto unavailable'

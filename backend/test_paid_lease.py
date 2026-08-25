@@ -79,4 +79,14 @@ check('double hyphen rejected', not xc.valid_name_label('a--b'))
 check('all-digits rejected', not xc.valid_name_label('12345'))
 check('64 chars rejected', not xc.valid_name_label('a' * 64))
 
+# --- is_public_http_url: SSRF guard for provider proof-of-possession ---
+check('public https url allowed', xc.is_public_http_url('https://xchat-relay-1.fly.dev/blob'))
+check('loopback blocked', not xc.is_public_http_url('http://127.0.0.1:8791/blob'))
+check('localhost blocked', not xc.is_public_http_url('http://localhost/blob'))
+check('link-local metadata blocked', not xc.is_public_http_url('http://169.254.169.254/latest/meta-data'))
+check('private 10.x blocked', not xc.is_public_http_url('http://10.0.0.5/'))
+check('private 192.168 blocked', not xc.is_public_http_url('http://192.168.1.1/'))
+check('file scheme blocked', not xc.is_public_http_url('file:///etc/passwd'))
+check('gopher scheme blocked', not xc.is_public_http_url('gopher://evil/'))
+
 print('\nALL PAID-LEASE CORE TESTS PASSED')

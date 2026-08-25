@@ -420,6 +420,28 @@ def valid_name_label(label):
 
 _LABEL_ALLOWED = set('abcdefghijklmnopqrstuvwxyz0123456789-')
 
+def is_public_http_url(url):
+    # SSRF guard for a relay-side fetch (e.g. provider proof-of-possession): http/https only, and the host
+    # must resolve ONLY to GLOBAL public unicast IPs. Blocks loopback/private/link-local — including the
+    # 169.254.169.254 cloud-metadata endpoint — plus multicast/reserved/unspecified. Callers should ALSO
+    # disable redirects (a public 302 -> internal defeats a one-time check) and cap the body size. Residual:
+    # DNS rebinding between this check and the fetch (accepted; the fetch only reads bytes and hash-checks).
+    try:
+        u = urllib.parse.urlparse(url)
+        if u.scheme not in ('http', 'https') or not u.hostname:
+            return False
+        port = u.port or (443 if u.scheme == 'https' else 80)
+        infos = socket.getaddrinfo(u.hostname, port, proto=socket.IPPROTO_TCP)
+        if not infos:
+            return False
+        for _fam, _t, _p, _c, sockaddr in infos:
+            ip = ipaddress.ip_address(sockaddr[0])
+            if not ip.is_global or ip.is_multicast or ip.is_reserved or ip.is_unspecified:
+                return False
+        return True
+    except Exception:
+        return False
+
 def paid_lease_decision(cur, anchor, now, grace_s=None):
     # PURE ownership decision for a PAID claim, BEFORE payment is verified. Given the currently-stored lease
     # record `cur` (or None) and the new claimant `anchor`, return (allowed, reason):
