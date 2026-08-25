@@ -135,6 +135,14 @@ anchors = {}                         # anchor_id (nano_ root address) -> [signed
 leases  = {}                         # label -> winning signed lease; FIRST valid claim per label wins
 cards   = {}                         # label -> signed page card (title/description/tags); NEWEST ts wins,
                                      # only for a name the anchor already owns (see accept_card)
+providers = {}                       # cid -> { url: last_seen_ts } — WHERE the bytes for a content cid can
+                                     # be fetched. This is what demotes a relay from HOST to NAMESERVER: a
+                                     # personal node keeps the bytes and just announces "cid X lives at my
+                                     # URL", so the relay need not store the blob at all. Advisory + UNSIGNED
+                                     # is safe because content is address-by-hash — the client verifies
+                                     # sha256(bytes)==cid no matter who served them, so a lying provider can
+                                     # only waste one fetch, never forge content. Freshness-windowed (see
+                                     # PROVIDER_TTL): entries a node stops re-announcing age out.
 known = {SELF}                       # relays this relay knows about (flat URL set — the legacy wire format)
 # A relay's IDENTITY is its own keypair, not its URL. A relay behind a Cloudflare quick tunnel gets a
 # brand-new hostname on every restart, and a URL-keyed peer set treats each one as a new relay: the
@@ -254,6 +262,12 @@ RELEASE_PIN_KEEP = int(os.environ.get('XC_RELEASE_PIN_KEEP', '3'))   # newest re
 ANCHORS_MAX      = int(os.environ.get('XC_ANCHORS_MAX', '50000'))    # distinct anchors stored (backstop)
 ANCHOR_LOG_MAX   = int(os.environ.get('XC_ANCHOR_LOG_MAX', '1024'))  # events per anchor log (rotation depth)
 LEASES_MAX       = int(os.environ.get('XC_LEASES_MAX', '50000'))     # distinct name leases stored (backstop)
+PROVIDERS_MAX    = int(os.environ.get('XC_PROVIDERS_MAX', '50000'))   # distinct cids with provider hints
+PROVIDER_TTL     = int(os.environ.get('XC_PROVIDER_TTL', '900'))      # a provider entry is fresh for 15 min;
+                                                                       # a personal node re-announces well inside
+                                                                       # this, so dead home boxes age out of the
+                                                                       # directory instead of accumulating
+PROVIDER_URLS_MAX = int(os.environ.get('XC_PROVIDER_URLS_MAX', '16')) # provider URLs kept per cid (evict oldest)
 
 def _cap_dict(d, maxn):
     # Distinct-key backstop: evict oldest-inserted keys until within maxn. Python dicts are
@@ -989,6 +1003,47 @@ def accept_card(m):
     mark_dirty()
     return True, 'stored'
 
+def accept_provide(m):
+    # Register a PROVIDER: "the bytes for content <cid> can be fetched at <url>". Unauthenticated on
+    # purpose — like /blob — because content is address-by-hash: whoever fetches re-checks sha256(bytes)
+    # ==cid, so a bogus url only costs a failed fetch, never a forged page. We only sanity-check shape,
+    # then stamp it with a fresh timestamp (freshness window in /providers drops stale ones). Returns
+    # (accepted, info).
+    if not isinstance(m, dict):
+        return False, 'bad body'
+    cid = str(m.get('cid', ''))
+    url = str(m.get('url', ''))
+    if not cid or len(cid) > 128:
+        return False, 'bad cid'
+    if not (url.startswith('http://') or url.startswith('https://')) or len(url) > 256:
+        return False, 'bad url'
+    now = time.time()
+    urls = providers.get(cid)
+    if urls is None:
+        if len(providers) >= PROVIDERS_MAX:
+            _cap_dict(providers, PROVIDERS_MAX)      # oldest-cid backstop
+        urls = providers[cid] = {}
+    urls[url] = now
+    if len(urls) > PROVIDER_URLS_MAX:                # keep the most-recently-seen URLs for this cid
+        for dead in sorted(urls, key=urls.get)[:len(urls) - PROVIDER_URLS_MAX]:
+            urls.pop(dead, None)
+    mark_dirty()
+    return True, 'stored'
+
+def fresh_providers(cid):
+    # The still-fresh provider URLs for a cid, newest-first. Prunes anything past PROVIDER_TTL as a
+    # side effect so a directory of dead home boxes never accumulates.
+    now = time.time()
+    urls = providers.get(cid)
+    if not urls:
+        return []
+    for u in [u for u, ts in urls.items() if now - ts > PROVIDER_TTL]:
+        urls.pop(u, None)
+    if not urls:
+        providers.pop(cid, None)
+        return []
+    return sorted(urls, key=urls.get, reverse=True)
+
 def backfill():
     # SYNC ON JOIN. bootstrap() learns the peer list but pulls no content, so a freshly launched
     # relay used to come up blank and only accumulate what was pushed to it AFTER joining — it never
@@ -1141,7 +1196,8 @@ def blob_credit(cid, payhash):
 # (in-memory before this meant comments, uploaded media, likes, poll votes vanished on restart)
 _STATE_KEYS = ('engage', 'notifs', 'supporters', 'follows', 'comments',   # blobs now live in SQLite
                'releases', 'profiles', 'dmkeys', 'pollvotes', 'reports', 'pinned', 'pins_paid',
-               'tips_paid', 'revocations', 'scores', 'games_dir', 'anchors', 'leases', 'cards')
+               'tips_paid', 'revocations', 'scores', 'games_dir', 'anchors', 'leases', 'cards',
+               'providers')
 # DMs are persisted SEPARATELY (not via the generic loop above): on disk they stay a FLAT `dms` list in
 # arrival order — so an OLDER relay can still read a store this one writes — and load() re-buckets them.
 
@@ -1850,6 +1906,14 @@ class H(BaseHTTPRequestHandler):
                                         'tier': ('mesh' if _am_mesh() else 'stable'),
                                         'stable_replicas': STABLE_REPLICAS, 'mesh_replicas': MESH_REPLICAS,
                                         'stable_relays': len(stable), 'mesh_relays': len(mesh)}))
+        elif self.path.startswith('/providers'):
+            # WHERE to fetch a content cid's bytes: the personal nodes that announced they hold it,
+            # freshest first. The client tries these (verifying the hash) before falling back to this
+            # relay's own /blob cache — so the bytes can live on the owner's machine, not here.
+            cid = qs(self.path).get('cid', '')
+            urls = fresh_providers(cid)
+            self._send(200, json.dumps({'cid': cid, 'providers': urls,
+                                        'cached_here': blob_has(cid)}))
         elif self.path.startswith('/haveblob'):
             cid = qs(self.path).get('cid', '')
             self._send(200, json.dumps({'cid': cid, 'have': blob_has(cid),
@@ -2226,6 +2290,15 @@ class H(BaseHTTPRequestHandler):
             # tampered log never enters. Newest-valid-longest wins (see accept_anchor).
             try:
                 ok, info = accept_anchor(json.loads(raw or '{}'))
+                self._send(200 if ok else 400, json.dumps({'ok': ok, 'info': info}))
+            except Exception as e:
+                self._send(400, json.dumps({'ok': False, 'error': str(e)}))
+        elif self.path.startswith('/provide'):
+            # A personal node announcing "I hold content <cid> at <url>". Unauthenticated by design (see
+            # accept_provide) — content is address-by-hash, so the fetcher's own sha256 check is the
+            # security boundary, not who registered the hint. Nodes re-POST this on a heartbeat.
+            try:
+                ok, info = accept_provide(json.loads(raw or '{}'))
                 self._send(200 if ok else 400, json.dumps({'ok': ok, 'info': info}))
             except Exception as e:
                 self._send(400, json.dumps({'ok': False, 'error': str(e)}))
