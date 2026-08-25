@@ -44,10 +44,13 @@ def main():
     threading.Thread(target=relay.serve_forever, daemon=True).start()
 
     store = tempfile.mkdtemp(prefix='xcnode-test-')
-    node_url = f'http://127.0.0.1:{node_port}'
+    public_port = free_port()
+    admin_url = f'http://127.0.0.1:{node_port}'      # loopback admin: /host, /status
+    public_url = f'http://127.0.0.1:{public_port}'   # public read-only: /blob (what others fetch)
     proc = subprocess.Popen(
         [sys.executable, os.path.join(HERE, 'xc_node.py'),
-         '--port', str(node_port), '--bind', '127.0.0.1', '--public-url', node_url,
+         '--port', str(node_port), '--public-port', str(public_port), '--bind', '127.0.0.1',
+         '--public-url', public_url,
          '--relay', f'http://127.0.0.1:{relay_port}', '--store', store],
         stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
     try:
@@ -55,43 +58,57 @@ def main():
         up = False
         for _ in range(50):
             try:
-                st = get(node_url + '/status'); up = True; break
+                st = get(admin_url + '/status'); up = True; break
             except Exception:
                 time.sleep(0.1)
         assert up, 'node never came up'
         assert st['hosted'] == 0, f'fresh node should host nothing, got {st}'
 
-        # 1. host content
+        # 1. host content (via the loopback ADMIN server)
         payload = b'the bytes live on my machine, not the relay'
         want_cid = 'sha256-' + hashlib.sha256(payload).hexdigest()
-        r = post(node_url + '/host', {'b64': base64.b64encode(payload).decode()})
+        r = post(admin_url + '/host', {'b64': base64.b64encode(payload).decode()})
         assert r['cid'] == want_cid, f'cid mismatch: {r["cid"]} != {want_cid}'
         assert r['bytes'] == len(payload)
         assert r['announced_to'] == 1, f'should have announced to the 1 relay, got {r}'
 
-        # 2. fetch it back by cid and verify the hash (what any other browser does)
-        b = get(node_url + '/blob?cid=' + want_cid)
+        # 2. fetch it back by cid from the PUBLIC server and verify the hash (what any other browser does)
+        b = get(public_url + '/blob?cid=' + want_cid)
         got = base64.b64decode(b['b64'])
         assert got == payload, 'bytes round-tripped wrong'
         assert 'sha256-' + hashlib.sha256(got).hexdigest() == want_cid, 'hash does not match cid'
 
-        # 3. the node told the relay WHERE the bytes are (provider heartbeat), pointing at ITS /blob
-        assert any(p.get('cid') == want_cid and p.get('url') == node_url + '/blob' for p in provides), \
+        # 3. the node told the relay WHERE the bytes are, pointing at its PUBLIC /blob
+        assert any(p.get('cid') == want_cid and p.get('url') == public_url + '/blob' for p in provides), \
             f'no matching /provide announcement seen: {provides}'
 
         # 4. status reflects the hosted blob
-        st = get(node_url + '/status')
-        assert st['hosted'] == 1 and st['blob_url'] == node_url + '/blob', st
+        st = get(admin_url + '/status')
+        assert st['hosted'] == 1 and st['blob_url'] == public_url + '/blob', st
 
-        # 5. an unknown cid 404s (not served, not forged)
+        # 5. SECURITY: the PUBLIC server must NOT expose admin routes (this is the tunnel-bypass fix —
+        #    the tunnel forwards to the public server, so /host must be unreachable there).
+        host_blocked = False
         try:
-            miss = get(node_url + '/blob?cid=sha256-' + '0' * 64)
+            post(public_url + '/host', {'b64': base64.b64encode(b'x').decode()})
+        except urllib.error.HTTPError as e:
+            host_blocked = (e.code == 404)
+        assert host_blocked, 'PUBLIC server must reject /host (404) — else the tunnel bypass is open'
+        hosted_blocked = False
+        try:
+            get(public_url + '/hosted')
+        except urllib.error.HTTPError as e:
+            hosted_blocked = (e.code == 404)
+        assert hosted_blocked, 'PUBLIC server must not expose /hosted (catalogue enumeration)'
+
+        # 6. an unknown cid 404s (not served, not forged)
+        try:
+            miss = get(public_url + '/blob?cid=sha256-' + '0' * 64)
             assert miss['b64'] is None, 'unknown cid should not return bytes'
         except urllib.error.HTTPError as e:
             assert e.code == 404
 
-        print('NODE OK: hosted', want_cid[:20] + '...', '| served + hash-verified | announced to relay as',
-              node_url + '/blob')
+        print('NODE OK: hosted', want_cid[:20] + '...', '| public-served + hash-verified | admin /host blocked on public port | announced', public_url + '/blob')
     finally:
         proc.terminate()
         try:

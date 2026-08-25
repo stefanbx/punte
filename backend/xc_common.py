@@ -403,6 +403,23 @@ def subscription_seconds(total_raw, price_raw=None, period_s=None):
     period_s = NAME_PERIOD_S if period_s is None else period_s
     return 0 if price_raw <= 0 else int(int(total_raw) * period_s // price_raw)
 
+def valid_name_label(label):
+    # Registrar label policy, enforced at the RELAY door too (defence in depth; also shrinks the homograph
+    # surface): lowercase a-z / 0-9 / hyphen, 3-63 chars, no leading/trailing/double hyphen, not all-digits.
+    if not isinstance(label, str):
+        return False
+    if len(label) < 3 or len(label) > 63:
+        return False
+    if any(c not in _LABEL_ALLOWED for c in label):
+        return False
+    if label[0] == '-' or label[-1] == '-' or '--' in label:
+        return False
+    if label.isdigit():
+        return False
+    return True
+
+_LABEL_ALLOWED = set('abcdefghijklmnopqrstuvwxyz0123456789-')
+
 def paid_lease_decision(cur, anchor, now, grace_s=None):
     # PURE ownership decision for a PAID claim, BEFORE payment is verified. Given the currently-stored lease
     # record `cur` (or None) and the new claimant `anchor`, return (allowed, reason):

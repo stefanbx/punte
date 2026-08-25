@@ -927,16 +927,28 @@ def accept_anchor(m):
         return False, res
     aid = res['anchor']
     cur = anchors.get(aid)
+    new_sorted = sorted(events, key=lambda e: int(e.get('seq', -1)))
     if cur is not None:
-        try:
-            cur_tip = max((int(x.get('seq', -1)) for x in cur), default=-1)
-        except Exception:
-            cur_tip = -1
+        # APPEND-ONLY. A valid replacement must EXTEND the stored log: its first len(cur) events must be
+        # byte-identical (same event hashes) to what we already hold. Without this, a compromised CURRENT
+        # operational key could forge a SIBLING event at an EXISTING seq — pre-rotation only proves control
+        # of the revealed key, not that the event is the one true event at that seq — and, by extending its
+        # own fork with throwaway keys, outrun and REPLACE the genuine log: a permanent takeover with no
+        # recovery path. A real rotation or a root recovery always preserves the prefix, so an honest owner
+        # is never blocked. (Residual: if an attacker's fork is the FIRST thing a relay ever stores for an
+        # anchor, this rule can't undo it — that needs root-authority precedence; tracked separately.)
+        cur_sorted = sorted(cur, key=lambda e: int(e.get('seq', -1)))
+        if len(new_sorted) < len(cur_sorted):
+            return False, 'shorter than stored log'
+        for i in range(len(cur_sorted)):
+            if _anchor_event_hash(new_sorted[i]) != _anchor_event_hash(cur_sorted[i]):
+                return False, 'log fork rejected: event seq %d diverges from stored history (append-only)' % i
+        cur_tip = int(cur_sorted[-1].get('seq', -1)) if cur_sorted else -1
         if int(res['seq']) <= cur_tip:
             return False, 'not newer than stored log (tip seq %d)' % cur_tip
     if cur is None and len(anchors) >= ANCHORS_MAX:
         return False, 'anchor cap'
-    anchors[aid] = events
+    anchors[aid] = new_sorted
     _cap_dict(anchors, ANCHORS_MAX)
     mark_dirty()
     return True, 'stored seq %s' % res['seq']
@@ -1058,6 +1070,8 @@ def accept_paid_lease(m):
     pays = m.get('payments') or []
     if not label or not anchor or not pub or not sig:
         return False, 'missing fields'
+    if not xc.valid_name_label(label):
+        return False, 'invalid name (a-z 0-9 hyphen, 3-63, no edge/double hyphen, not all-digits)'
     if not isinstance(pays, list) or not pays:
         return False, 'no payments cited'
     try:
@@ -1075,10 +1089,11 @@ def accept_paid_lease(m):
     known = _known_relay_accounts()
     if not known:
         return False, 'relay has no account to receive payment'
-    total, fresh = 0, []
+    total, fresh, seen = 0, [], set()
     for h in pays:
-        if not isinstance(h, str) or not h or h in name_pays_used:
-            continue                                     # malformed, or already spent (never double-count)
+        if not isinstance(h, str) or not h or h in name_pays_used or h in seen:
+            continue                                     # malformed, already spent, or REPEATED in this lease
+        seen.add(h)                                      # dedupe within this lease so one payment can't count twice
         try:
             bi = xc.rpc({'action': 'block_info', 'json_block': 'true', 'hash': h})
         except Exception:

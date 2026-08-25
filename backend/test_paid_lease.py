@@ -69,4 +69,14 @@ check('the owner can still renew during grace',
 check('a DORMANT name past grace is reclaimable by anyone',
       xc.paid_lease_decision(active, BOB, 2000 + GRACE + 1) == (True, 'reclaim'))
 
+# --- valid_name_label: relay-side policy ---
+check('valid label ok', xc.valid_name_label('my-shop'))
+check('too short rejected', not xc.valid_name_label('ab'))
+check('uppercase rejected', not xc.valid_name_label('Shop'))
+check('underscore rejected', not xc.valid_name_label('a_b'))
+check('leading hyphen rejected', not xc.valid_name_label('-shop'))
+check('double hyphen rejected', not xc.valid_name_label('a--b'))
+check('all-digits rejected', not xc.valid_name_label('12345'))
+check('64 chars rejected', not xc.valid_name_label('a' * 64))
+
 print('\nALL PAID-LEASE CORE TESTS PASSED')

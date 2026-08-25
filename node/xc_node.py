@@ -158,7 +158,11 @@ class Node:
                 pass
 
 
-def make_handler(node: Node):
+def make_handler(node: Node, admin=False):
+    # admin=True: the loopback-only server the OWNER's browser uses (has /host, /hosted). admin=False: the
+    # PUBLIC/tunnel-facing server — /blob + /status ONLY. Splitting them is what closes the tunnel bypass:
+    # the mesh tunnel forwards to the PUBLIC server (no /host), so a remote caller can never reach an admin
+    # route even though the tunnel dispatches over a loopback socket. is_loopback stays as defence in depth.
     def is_loopback(addr):
         return addr[0] in ('127.0.0.1', '::1', '::ffff:127.0.0.1')
 
@@ -197,7 +201,9 @@ def make_handler(node: Node):
                                  'hosted': len(cids), 'heartbeat_s': HEARTBEAT_S,
                                  'tunnel': node.mesh is not None,
                                  'reach': node.provider_blob_urls()})
-            elif path == '/hosted':
+            elif path == '/hosted' and admin:
+                # ADMIN-ONLY: the full catalogue. Public callers must not enumerate everything one node
+                # hosts (that correlates an owner's whole catalogue under one identity).
                 cids = node.store.cids()
                 self._send(200, {'hosted': [{'cid': c, 'size': node.store.size(c)} for c in cids]})
             else:
@@ -205,6 +211,10 @@ def make_handler(node: Node):
 
         def do_POST(self):
             path = urlparse(self.path).path
+            if not admin:
+                # the public/tunnel server exposes NO mutating routes at all
+                self._send(404, {'error': 'unknown route'})
+                return
             if not is_loopback(self.client_address):
                 # /host mutates what this machine serves — only the machine's owner (loopback) may call it.
                 self._send(403, {'error': 'admin routes are loopback-only'})
@@ -292,6 +302,9 @@ def main():
                     help='relay to announce to (repeatable). Defaults to the two live relays.')
     ap.add_argument('--serve-dir', default=None,
                     help='host every file in this directory on startup and print each cid')
+    ap.add_argument('--public-port', type=int, default=None,
+                    help='port for the PUBLIC read-only server (/blob, /status) that the tunnel and remote/LAN '
+                         'users reach. Defaults to <port>+1. The admin API (/host) is NEVER served here.')
     ap.add_argument('--tunnel', action='store_true',
                     help='become reachable from anywhere through the public entry relays (no static IP, '
                          'no CA). Requires nanopy + pynacl — run under the mesh venv. Announces the current '
@@ -299,7 +312,10 @@ def main():
     a = ap.parse_args()
 
     store = Store(a.store)
-    public_url = a.public_url or f'http://127.0.0.1:{a.port}'
+    public_port = a.public_port or (a.port + 1)
+    # The provider URL other people fetch from is the PUBLIC server. Default it to loopback:public_port
+    # (fine same-machine; set --public-url to a reachable address for LAN, or use --tunnel for anywhere).
+    public_url = a.public_url or f'http://127.0.0.1:{public_port}'
     relays = a.relay or DEFAULT_RELAYS
     node = Node(store, public_url, relays)
 
@@ -310,9 +326,10 @@ def main():
             raise SystemExit(f'--tunnel needs the crypto module (nanopy + pynacl). Run under the mesh venv, '
                              f'e.g. ~/.xchat-mesh-node/venv/bin/python node/xc_node.py --tunnel …\n  ({e})')
         secret = _rendezvous_secret(store)
-        # the announce relays double as entry candidates — they advertise the ENTRY_CAP ('t1'). public=True
-        # lists this node so any browser reaches it with no shared secret (trades node anonymity for reach).
-        node.mesh = tun.MeshClient(xc, secret, f'http://127.0.0.1:{a.port}', entries=list(relays),
+        # The tunnel forwards to the PUBLIC server (no admin routes), so a request arriving over the tunnel
+        # can never reach /host even though it is dispatched over a loopback socket. public=True lists this
+        # node so any browser reaches it with no shared secret (trades node anonymity for reach).
+        node.mesh = tun.MeshClient(xc, secret, f'http://127.0.0.1:{public_port}', entries=list(relays),
                                    self_url='', public=True,
                                    log=lambda m: print(f'[tunnel] {m}', flush=True))
         node.mesh.start()
@@ -328,14 +345,18 @@ def main():
 
     threading.Thread(target=node.heartbeat_loop, daemon=True).start()
 
-    httpd = ThreadingHTTPServer((a.bind, a.port), make_handler(node))
-    print(f'xc_node up on {a.bind}:{a.port}  (public: {public_url})', flush=True)
+    # PUBLIC server (read-only: /blob, /status) — bound to --bind so remote/LAN + the tunnel can reach it.
+    public_srv = ThreadingHTTPServer((a.bind, public_port), make_handler(node, admin=False))
+    threading.Thread(target=public_srv.serve_forever, daemon=True).start()
+    # ADMIN server (/host, /hosted) — bound to LOOPBACK ONLY, for this machine's own browser. Never remote.
+    admin_srv = ThreadingHTTPServer(('127.0.0.1', a.port), make_handler(node, admin=True))
+    print(f'xc_node up — admin(loopback) 127.0.0.1:{a.port} · public {a.bind}:{public_port}  (provider: {public_url})', flush=True)
     print(f'  store:  {store.blobs}', flush=True)
     print(f'  relays: {", ".join(relays)}', flush=True)
     print(f'  tunnel: {"on (reachable from anywhere via entry relays)" if a.tunnel else "off (local/LAN only)"}', flush=True)
     print(f'  hosting {len(store.cids())} blob(s)', flush=True)
     try:
-        httpd.serve_forever()
+        admin_srv.serve_forever()
     except KeyboardInterrupt:
         node.stop()
         print('\nbye', flush=True)
