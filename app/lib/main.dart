@@ -7612,13 +7612,8 @@ class _FeedScreenState extends State<FeedScreen> with WidgetsBindingObserver {
           icon: AuthorAvatar(account: _account, handle: _handle, radius: 15),
         ),
         titleSpacing: 0,
-        title: Row(mainAxisSize: MainAxisSize.min, children: const [
-          NanoMark(size: 24),
-          SizedBox(width: 6),
-          Text('Chat',
-              style: TextStyle(
-                  color: kText, fontWeight: FontWeight.w800, fontSize: 18)),
-        ]),
+        title: const Text('Knot',
+            style: TextStyle(color: kText, fontWeight: FontWeight.w800, fontSize: 18)),
         actions: [
           // encrypted direct messages
           IconButton(
