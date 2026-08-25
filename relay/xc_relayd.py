@@ -2068,7 +2068,8 @@ class H(BaseHTTPRequestHandler):
             # top later. `account` is where to send this relay's share.
             self._send(200, json.dumps({'account': RELAY_ACCT, 'price_raw': str(xc.NAME_PRICE_RAW) if xc else '0',
                                         'period_s': xc.NAME_PERIOD_S if xc else 0,
-                                        'grace_s': xc.NAME_GRACE_S if xc else 0}))
+                                        'grace_s': xc.NAME_GRACE_S if xc else 0,
+                                        'renew_window_s': xc.NAME_RENEW_WINDOW_S if xc else 0}))
         elif self.path.startswith('/haveblob'):
             cid = qs(self.path).get('cid', '')
             self._send(200, json.dumps({'cid': cid, 'have': blob_has(cid),

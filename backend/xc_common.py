@@ -361,6 +361,7 @@ def card_canon(m):
 NAME_PRICE_RAW = int(os.environ.get('XC_NAME_PRICE_RAW', str(10 ** 28)))       # raw that buys NAME_PERIOD_S
 NAME_PERIOD_S  = int(os.environ.get('XC_NAME_PERIOD_S', str(365 * 24 * 3600))) # ownership seconds per price
 NAME_GRACE_S   = int(os.environ.get('XC_NAME_GRACE_S', str(30 * 24 * 3600)))   # after expiry before reclaim
+NAME_RENEW_WINDOW_S = int(os.environ.get('XC_NAME_RENEW_WINDOW_S', str(30 * 24 * 3600)))  # 'expiring soon' lead
 
 def paid_lease_canon(m):
     # Preimage for a PAID lease. The payer is intentionally NOT in the preimage (payer != anchor for
