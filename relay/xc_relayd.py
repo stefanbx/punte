@@ -2489,6 +2489,58 @@ class H(BaseHTTPRequestHandler):
                     self._send(200, json.dumps({'ok': ok_local, 'info': info, 'fanned_to': fanned}))
             except Exception as e:
                 self._send(400, json.dumps({'ok': False, 'error': str(e)}))
+        elif self.path.startswith('/relay_sealed'):
+            # SEALED ONION forwarder (finding [6]): relay an OPAQUE sealed envelope to the destination
+            # relay's /sealed_submit. We CANNOT read it (it is sealed to the destination's read key) — we
+            # learn only the client's IP and which relay it is destined for, never the domain/payment.
+            # Restricted to KNOWN relays (never an open proxy).
+            try:
+                m = json.loads(raw or '{}')
+                to = str(m.get('to', '')).rstrip('/')
+                env = m.get('env')
+                known_norm = {u.rstrip('/') for u in _serve_relays()}
+                if to not in known_norm or not isinstance(env, dict):
+                    self._send(400, json.dumps({'ok': False, 'error': 'unknown destination relay'}))
+                else:
+                    resp = urllib.request.urlopen(urllib.request.Request(
+                        to + '/sealed_submit', json.dumps(env).encode(),
+                        {'Content-Type': 'application/json'}), timeout=20).read()
+                    self._send(200, resp.decode() if isinstance(resp, bytes) else json.dumps({'ok': True}))
+            except Exception as e:
+                self._send(400, json.dumps({'ok': False, 'error': str(e)}))
+        elif self.path.startswith('/sealed_submit'):
+            # SEALED ONION destination (finding [6]): a write sealed to THIS relay's read key, handed to us
+            # by a forwarding relay that could not read it. We open it, process the inner write, and fan it
+            # out to the other relays. The forwarder saw the client IP but not the write; we see the write
+            # but only the forwarder's IP — so no single relay links the client IP to the (domain, payment).
+            if not (_NACL and READ_SK):
+                self._send(404, json.dumps({'ok': False, 'error': 'sealed submit unavailable'}))
+            else:
+                try:
+                    env = json.loads(raw or '{}')
+                    epk = _NaPub(bytes.fromhex(env['epk']))
+                    inner = json.loads(_NaBox(READ_SK, epk).decrypt(base64.b64decode(env['ct'])))
+                    path = str(inner.get('path', ''))
+                    body = inner.get('body')
+                    acc = {'/paidlease': accept_paid_lease, '/lease': accept_lease, '/card': accept_card,
+                           '/anchor': accept_anchor, '/provide': accept_provide}.get(path)
+                    if acc is None or not isinstance(body, (dict, list)):
+                        self._send(400, json.dumps({'ok': False, 'error': 'unforwardable inner write'}))
+                    else:
+                        ok_local, info = acc(body)
+                        payload = json.dumps(body).encode()
+                        fanned = 0
+                        for url in [u for u in _serve_relays() if u != SELF and '/r/' not in u
+                                    and '127.0.0.1' not in u and 'localhost' not in u]:
+                            try:
+                                urllib.request.urlopen(urllib.request.Request(
+                                    url + path, payload, {'Content-Type': 'application/json'}), timeout=10).read()
+                                fanned += 1
+                            except Exception:
+                                pass
+                        self._send(200, json.dumps({'ok': ok_local, 'info': info, 'fanned_to': fanned}))
+                except Exception as e:
+                    self._send(400, json.dumps({'ok': False, 'error': 'bad sealed submit: %s' % e}))
         elif self.path.startswith('/paidlease'):
             # REGISTRAR: a PAID subscription lease. VERIFIED here — root signature, ownership decision
             # (collision/renew/grace/reclaim), and on-chain payment(s) to relay account(s). See
