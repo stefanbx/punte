@@ -97,15 +97,25 @@ class Node:
         self.store = store
         self.public_url = public_url.rstrip('/')
         self.relays = relays
+        self.mesh = None                 # set in --tunnel mode (an xc_tunnel.MeshClient)
         self._stop = threading.Event()
 
     def blob_url(self):
         return self.public_url + '/blob'
 
+    def provider_blob_urls(self):
+        # WHERE other people can fetch our /blob. In TUNNEL mode this is our current reach URLs through
+        # the public entry relays — they rotate each epoch, so we recompute them every heartbeat, and we
+        # deliberately do NOT advertise our loopback URL (a remote browser would resolve 127.0.0.1 to ITS
+        # OWN machine). Without a tunnel it is just our own public URL.
+        if self.mesh is not None:
+            return [u + '/blob' for u in self.mesh.current_reach_urls()]
+        return [self.blob_url()]
+
     # --- provider heartbeat: tell the relays WHERE these bytes are, repeatedly, so the directory only
-    #     ever points at a node that is currently up ------------------------------------------------
-    def announce(self, cid):
-        body = json.dumps({'cid': cid, 'url': self.blob_url()}).encode()
+    #     ever points at a node that is currently up (and, in tunnel mode, at a token that is still live)
+    def _provide(self, cid, url):
+        body = json.dumps({'cid': cid, 'url': url}).encode()
         ok = 0
         for r in self.relays:
             try:
@@ -116,24 +126,36 @@ class Node:
                 pass
         return ok
 
-    def announce_all(self):
-        cids = self.store.cids()
-        for c in cids:
-            self.announce(c)
-        return len(cids)
+    def announce(self, cid):
+        # register this one cid at every current provider URL (used right after /host)
+        urls = self.provider_blob_urls()
+        for u in urls:
+            self._provide(cid, u)
+        return len(urls)
 
     def heartbeat_loop(self):
         while not self._stop.is_set():
-            try:
-                n = self.announce_all()
-                print(f'[heartbeat] announced {n} blob(s) to {len(self.relays)} relay(s) as {self.blob_url()}',
-                      flush=True)
-            except Exception as e:
-                print(f'[heartbeat] error: {e}', flush=True)
-            self._stop.wait(HEARTBEAT_S)
+            urls = self.provider_blob_urls()
+            if urls:
+                cids = self.store.cids()
+                for c in cids:
+                    for u in urls:
+                        self._provide(c, u)
+                print(f'[heartbeat] announced {len(cids)} blob(s) at {len(urls)} url(s): '
+                      f'{", ".join(urls)}', flush=True)
+                self._stop.wait(HEARTBEAT_S)
+            else:
+                # tunnel mode, not yet connected to an entry — retry soon so we advertise as fast as we can
+                print('[heartbeat] waiting for a tunnel entry…', flush=True)
+                self._stop.wait(5)
 
     def stop(self):
         self._stop.set()
+        if self.mesh is not None:
+            try:
+                self.mesh.stop()
+            except Exception:
+                pass
 
 
 def make_handler(node: Node):
@@ -172,7 +194,9 @@ def make_handler(node: Node):
                 cids = node.store.cids()
                 self._send(200, {'node': 'xc_node', 'public_url': node.public_url,
                                  'blob_url': node.blob_url(), 'relays': node.relays,
-                                 'hosted': len(cids), 'heartbeat_s': HEARTBEAT_S})
+                                 'hosted': len(cids), 'heartbeat_s': HEARTBEAT_S,
+                                 'tunnel': node.mesh is not None,
+                                 'reach': node.provider_blob_urls()})
             elif path == '/hosted':
                 cids = node.store.cids()
                 self._send(200, {'hosted': [{'cid': c, 'size': node.store.size(c)} for c in cids]})
@@ -222,6 +246,40 @@ def make_handler(node: Node):
     return H
 
 
+# --- tunnel mode: make a NAT'd home node reachable through public entry relays, no static IP / no CA.
+# This is the ONLY part that needs the crypto module (xc_common) + xc_tunnel from the repo, so it is
+# loaded lazily and only when --tunnel is given. Run it under a venv that has nanopy + pynacl
+# (e.g. ~/.xchat-mesh-node/venv/bin/python).
+def _load_crypto_and_tunnel():
+    import importlib.util
+    here = os.path.dirname(os.path.abspath(__file__))
+    root = os.path.dirname(here)
+
+    def _load(name, path):
+        spec = importlib.util.spec_from_file_location(name, path)
+        m = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(m)
+        return m
+
+    xc = _load('xc_common', os.path.join(root, 'backend', 'xc_common.py'))
+    tun = _load('xc_tunnel', os.path.join(root, 'relay', 'xc_tunnel.py'))
+    return xc, tun
+
+
+def _rendezvous_secret(store):
+    # A stable per-node secret that seeds our routing tokens. In PUBLIC mode the node trades anonymity for
+    # zero-config reachability anyway, so this need only be stable, not shared — kept on disk beside blobs.
+    p = os.path.join(store.root, 'tunnel_secret')
+    if os.path.exists(p):
+        with open(p) as f:
+            return f.read().strip()
+    import binascii
+    s = binascii.hexlify(os.urandom(32)).decode()
+    with open(p, 'w') as f:
+        f.write(s)
+    return s
+
+
 def main():
     ap = argparse.ArgumentParser(description='Personal content node for the sovereign web.')
     ap.add_argument('--port', type=int, default=8791)
@@ -234,12 +292,30 @@ def main():
                     help='relay to announce to (repeatable). Defaults to the two live relays.')
     ap.add_argument('--serve-dir', default=None,
                     help='host every file in this directory on startup and print each cid')
+    ap.add_argument('--tunnel', action='store_true',
+                    help='become reachable from anywhere through the public entry relays (no static IP, '
+                         'no CA). Requires nanopy + pynacl — run under the mesh venv. Announces the current '
+                         'reach URLs as providers, so a remote browser fetches through an entry.')
     a = ap.parse_args()
 
     store = Store(a.store)
     public_url = a.public_url or f'http://127.0.0.1:{a.port}'
     relays = a.relay or DEFAULT_RELAYS
     node = Node(store, public_url, relays)
+
+    if a.tunnel:
+        try:
+            xc, tun = _load_crypto_and_tunnel()
+        except Exception as e:
+            raise SystemExit(f'--tunnel needs the crypto module (nanopy + pynacl). Run under the mesh venv, '
+                             f'e.g. ~/.xchat-mesh-node/venv/bin/python node/xc_node.py --tunnel …\n  ({e})')
+        secret = _rendezvous_secret(store)
+        # the announce relays double as entry candidates — they advertise the ENTRY_CAP ('t1'). public=True
+        # lists this node so any browser reaches it with no shared secret (trades node anonymity for reach).
+        node.mesh = tun.MeshClient(xc, secret, f'http://127.0.0.1:{a.port}', entries=list(relays),
+                                   self_url='', public=True,
+                                   log=lambda m: print(f'[tunnel] {m}', flush=True))
+        node.mesh.start()
 
     if a.serve_dir:
         d = os.path.expanduser(a.serve_dir)
@@ -256,6 +332,7 @@ def main():
     print(f'xc_node up on {a.bind}:{a.port}  (public: {public_url})', flush=True)
     print(f'  store:  {store.blobs}', flush=True)
     print(f'  relays: {", ".join(relays)}', flush=True)
+    print(f'  tunnel: {"on (reachable from anywhere via entry relays)" if a.tunnel else "off (local/LAN only)"}', flush=True)
     print(f'  hosting {len(store.cids())} blob(s)', flush=True)
     try:
         httpd.serve_forever()
