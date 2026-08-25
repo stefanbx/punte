@@ -929,23 +929,26 @@ def accept_anchor(m):
     cur = anchors.get(aid)
     new_sorted = sorted(events, key=lambda e: int(e.get('seq', -1)))
     if cur is not None:
-        # APPEND-ONLY. A valid replacement must EXTEND the stored log: its first len(cur) events must be
-        # byte-identical (same event hashes) to what we already hold. Without this, a compromised CURRENT
-        # operational key could forge a SIBLING event at an EXISTING seq — pre-rotation only proves control
-        # of the revealed key, not that the event is the one true event at that seq — and, by extending its
-        # own fork with throwaway keys, outrun and REPLACE the genuine log: a permanent takeover with no
-        # recovery path. A real rotation or a root recovery always preserves the prefix, so an honest owner
-        # is never blocked. (Residual: if an attacker's fork is the FIRST thing a relay ever stores for an
-        # anchor, this rule can't undo it — that needs root-authority precedence; tracked separately.)
         cur_sorted = sorted(cur, key=lambda e: int(e.get('seq', -1)))
-        if len(new_sorted) < len(cur_sorted):
-            return False, 'shorter than stored log'
-        for i in range(len(cur_sorted)):
+        # Where do the two valid logs first differ? (both share ev0 — only the root key can sign an
+        # inception for this anchor, so the inception is always identical.)
+        div = None
+        for i in range(min(len(cur_sorted), len(new_sorted))):
             if _anchor_event_hash(new_sorted[i]) != _anchor_event_hash(cur_sorted[i]):
-                return False, 'log fork rejected: event seq %d diverges from stored history (append-only)' % i
-        cur_tip = int(cur_sorted[-1].get('seq', -1)) if cur_sorted else -1
-        if int(res['seq']) <= cur_tip:
-            return False, 'not newer than stored log (tip seq %d)' % cur_tip
+                div = i
+                break
+        if div is None:
+            # No divergence: one log is a prefix of the other. APPEND-ONLY — accept only a strictly LONGER
+            # extension (a real rotation/recovery), never a shorter or equal rewrite.
+            if len(new_sorted) <= len(cur_sorted):
+                return False, 'not newer than stored log'
+        else:
+            # The logs FORK at seq `div`. A pre-rotation fork — which a stolen OPERATIONAL key can forge —
+            # must NEVER displace stored history. ONLY a ROOT recovery may override, because a root event
+            # requires the cold root key the attacker does not have. This is what lets the true owner
+            # reclaim an anchor a relay wrongly accepted a fork for, while a plain fork can never win.
+            if not (new_sorted[div].get('authority') == 'root' and cur_sorted[div].get('authority') != 'root'):
+                return False, 'log fork rejected: diverges from stored history without root-recovery precedence'
     if cur is None and len(anchors) >= ANCHORS_MAX:
         return False, 'anchor cap'
     anchors[aid] = new_sorted
