@@ -1,4 +1,4 @@
-package xno.xchat.xchat
+package xno.knot.knot
 
 import android.view.WindowManager
 import io.flutter.embedding.android.FlutterActivity

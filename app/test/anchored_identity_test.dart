@@ -5,9 +5,9 @@ import 'dart:convert';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
-import 'package:xchat/anchor.dart';
-import 'package:xchat/anchored_identity.dart';
-import 'package:xchat/wallet.dart';
+import 'package:knot/anchor.dart';
+import 'package:knot/anchored_identity.dart';
+import 'package:knot/wallet.dart';
 
 // Throwaway keypairs — NOT any real wallet.
 final _root = NanoWallet('a1' * 32);

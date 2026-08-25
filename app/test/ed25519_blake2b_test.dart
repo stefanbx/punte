@@ -7,7 +7,7 @@ import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nanodart/nanodart.dart';
-import 'package:xchat/crypto/ed25519_blake2b.dart' as web;
+import 'package:knot/crypto/ed25519_blake2b.dart' as web;
 
 Uint8List _hexToBytes(String h) {
   final out = Uint8List(h.length ~/ 2);

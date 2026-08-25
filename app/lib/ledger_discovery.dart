@@ -1,5 +1,5 @@
-// App-side ledger discovery — find a live ӾChat endpoint straight from the XNO ledger, with no
-// hardcoded server and no dependency on any ӾChat infrastructure. This is the piece that turns
+// App-side ledger discovery — find a live Knot endpoint straight from the XNO ledger, with no
+// hardcoded server and no dependency on any Knot infrastructure. This is the piece that turns
 // "censorship-resistant" into "hard to shut down": if every baked-in endpoint (kDefaultBase and the
 // user's saved list) is dead, the app re-derives a working one from the Nano mainnet — a data source
 // no single party can take offline.
@@ -177,7 +177,7 @@ class LedgerDiscovery {
   }
 
   // Relays with the NANO ACCOUNT that announced each one — read straight off the ledger, so the
-  // account<->url binding does not pass through any ӾChat node. This is the trust anchor for a blind
+  // account<->url binding does not pass through any Knot node. This is the trust anchor for a blind
   // mailbox read: the client seals its read to a relay's key only after checking that key is signed by
   // the account the LEDGER (not the node) says owns that relay, so a node cannot substitute its own key.
   static Future<List<Map<String, String>>> discoverRelays(

@@ -1,6 +1,6 @@
 {
-    "name": "xchat",
-    "short_name": "xchat",
+    "name": "Knot",
+    "short_name": "Knot",
     "start_url": ".",
     "display": "standalone",
     "background_color": "#0175C2",

@@ -18,7 +18,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/semantics.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:xchat/main.dart';
+import 'package:knot/main.dart';
 
 Post _post({String text = 'hello', String handle = 'alice', int likes = 0, int reposts = 0}) =>
     Post('p1', handle, 'nano_1abc', 'post', text, null, null, null, null, 1786899000, likes, reposts);

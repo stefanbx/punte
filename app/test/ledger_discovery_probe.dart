@@ -1,5 +1,5 @@
 // Live-network probe (not a hermetic unit test): runs the real discovery against Nano mainnet.
-import 'package:xchat/ledger_discovery.dart';
+import 'package:knot/ledger_discovery.dart';
 import 'package:flutter_test/flutter_test.dart';
 void main() {
   test('linkToUrl decodes ASCII, rejects checkins/internal/zero', () {

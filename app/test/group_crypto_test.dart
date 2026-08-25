@@ -17,8 +17,8 @@
 import 'dart:convert';
 import 'dart:typed_data';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:xchat/main.dart' show DmCtl, GroupChat, GroupMsg;
-import 'package:xchat/wallet.dart';
+import 'package:knot/main.dart' show DmCtl, GroupChat, GroupMsg;
+import 'package:knot/wallet.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();

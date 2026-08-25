@@ -13,8 +13,8 @@
 import 'dart:math' as math;
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:xchat/anchor.dart';
-import 'package:xchat/wallet.dart';
+import 'package:knot/anchor.dart';
+import 'package:knot/wallet.dart';
 
 // 32 random bytes as hex — a throwaway Nano seed (identical shape to main.dart genSeed()).
 String _rndSeed() {
