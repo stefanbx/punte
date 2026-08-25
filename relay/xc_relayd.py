@@ -1606,6 +1606,78 @@ def relaykey_record():
     return {'account': ID_ACCT, 'pub': READ_SIG_PUB, 'read_pk': READ_PK,
             'ts': READ_TS, 'sig': READ_SIG, 'caps': 'r1'}
 
+# --- registrar PUSH notices (the relay is itself a mail sender) ------------------------------------
+# As a name subscription nears expiry the relay seals a renewal reminder to the owner's published DM key
+# and drops it in their mailbox — a real push, received in Mail like any message (see docs/SOVEREIGN-MAIL).
+# It uses a DM key derived from the relay identity, published under the relay account so a client verifies
+# the sender. First concrete piece of the transient-mailbox email service.
+RENEWAL_SWEEP_S = int(os.environ.get('XC_RENEWAL_SWEEP_S', '3600'))   # scan for expiring subscriptions hourly
+RELAY_DM_SK = RELAY_DM_PUB = ''
+_renew_notified = {}                                                   # label -> period_end already notified
+if _NACL and ID_KEY and xc is not None:
+    try:
+        _dm_seed = hashlib.blake2b(bytes.fromhex(ID_KEY) + b'xchat-dm', digest_size=32).digest()
+        RELAY_DM_SK = _NaPriv(_dm_seed)
+        RELAY_DM_PUB = bytes(RELAY_DM_SK.public_key).hex()
+        _dts = int(time.time())
+        _dl = dict(kv.split(' ', 1) for kv in
+                   xc._sign_lines(ID_KEY, xc.sig_canon('dmkey', ID_ACCT, str(_dts), RELAY_DM_PUB)))
+        dmkeys[ID_ACCT] = {'account': ID_ACCT, 'dm_pk': RELAY_DM_PUB, 'ts': _dts, 'caps': 's1',
+                           'sig': _dl.get('sig', ''), 'pub': _dl.get('pub', ID_PUB)}
+    except Exception:
+        RELAY_DM_SK = RELAY_DM_PUB = ''
+
+def _send_renewal_notice(owner_acct, label, days):
+    # Seal a renewal reminder to the owner's DM key and store it in their mailbox (a v1 record: the sender
+    # is the relay, not secret). Returns True if sent. No-op if the owner has not enabled mail.
+    if not (RELAY_DM_SK and RELAY_DM_PUB):
+        return False
+    rec = dmkeys.get(owner_acct)
+    if not isinstance(rec, dict) or not rec.get('dm_pk'):
+        return False
+    try:
+        box = _NaBox(RELAY_DM_SK, _NaPub(bytes.fromhex(rec['dm_pk'])))
+        text = ('Your domain nano://%s expires in %d day(s). Renew it from your wallet to keep it.' % (label, days)
+                if days > 0 else
+                'Your domain nano://%s has LAPSED and is in its grace period — renew now to keep it.' % label)
+        ct = base64.b64encode(bytes(box.encrypt(text.encode()))).decode()
+        m = {'to': owner_acct, 'from': ID_ACCT, 'from_pk': RELAY_DM_PUB, 'ct': ct,
+             'ts': int(time.time()), 'kind': 'renewal', 'mid': hashlib.sha256(
+                 (label + str(rec.get('ts'))).encode()).hexdigest()[:16]}
+        if _dm_store(m):
+            mark_dirty()
+        return True
+    except Exception:
+        return False
+
+def _renewal_sweep():
+    # Notify owners whose paid subscription is within the renew window (expiring) or lapsed but in grace,
+    # once per period. Owners without a published DM key are skipped (the wallet still shows the countdown).
+    now = time.time()
+    win, grace = xc.NAME_RENEW_WINDOW_S, xc.NAME_GRACE_S
+    for label, lz in list(leases.items()):
+        if not isinstance(lz, dict) or not lz.get('paid'):
+            continue
+        pu = float(lz.get('paid_until', 0))
+        if pu <= 0:
+            continue
+        expiring = 0 < (pu - now) <= win
+        in_grace = 0 <= (now - pu) < grace
+        if not (expiring or in_grace) or _renew_notified.get(label) == int(pu):
+            continue
+        if _send_renewal_notice(lz.get('anchor', ''), label, int((pu - now) // 86400) if expiring else 0):
+            _renew_notified[label] = int(pu)
+
+def _renewal_loop():
+    while True:
+        time.sleep(RENEWAL_SWEEP_S)
+        try:
+            _renewal_sweep()
+        except Exception:
+            pass
+if _NACL and ID_KEY and xc is not None:
+    threading.Thread(target=_renewal_loop, daemon=True).start()
+
 def _announce_canon(acct, url, ts):
     return xc.sig_canon('relay_announce', acct, url, str(ts))
 
