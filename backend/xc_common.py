@@ -352,6 +352,118 @@ def card_canon(m):
     return sig_canon('anchor-card', m.get('label', ''), m.get('anchor', ''),
                      m.get('title', ''), m.get('description', ''), m.get('tags', ''), str(m.get('ts', '')))
 
+# ---- name registrar: PAID subscription leases -----------------------------------------------------
+# A name is OWNED while a paid subscription is active. The fee is REVENUE to the relays that store+serve
+# the name (it funds the system, not a burn), split across the relays a registration pays. Ownership is the
+# ANCHOR's signature — the PAYER need not be the anchor, a deliberate privacy property (pay from a fresh,
+# unlinked account; see docs/SOVEREIGN-NAMING.md). Verification is PURE + injectable so it is testable
+# with no live ledger: the relay fetches each payment's block_info via rpc() and passes it in here.
+NAME_PRICE_RAW = int(os.environ.get('XC_NAME_PRICE_RAW', str(10 ** 28)))       # raw that buys NAME_PERIOD_S
+NAME_PERIOD_S  = int(os.environ.get('XC_NAME_PERIOD_S', str(365 * 24 * 3600))) # ownership seconds per price
+NAME_GRACE_S   = int(os.environ.get('XC_NAME_GRACE_S', str(30 * 24 * 3600)))   # after expiry before reclaim
+NAME_RENEW_WINDOW_S = int(os.environ.get('XC_NAME_RENEW_WINDOW_S', str(30 * 24 * 3600)))  # 'expiring soon' lead
+
+def paid_lease_canon(m):
+    # Preimage for a PAID lease. The payer is intentionally NOT in the preimage (payer != anchor for
+    # privacy): only the owner anchor, the label, the period bounds, and the cited payment hashes (sorted
+    # so order can't change the signature).
+    pays = ','.join(sorted(m.get('payments', []) or []))
+    return sig_canon('anchor-lease-paid', m.get('label', ''), m.get('anchor', ''),
+                     str(m.get('period_start', '')), str(m.get('period_end', '')), pays)
+
+def confirmed_send_raw(block_info, to_account, nano_to_pub_fn=None):
+    # PURE: the raw amount of a CONFIRMED send to `to_account` described by block_info (a node block_info
+    # result), else 0. Fails closed on anything ambiguous — unconfirmed, wrong subtype, wrong destination,
+    # non-positive, malformed. Mirrors grant_pin's on-chain checks so a subscription payment is validated
+    # exactly like a pay-to-pin payment.
+    nano_to_pub_fn = nano_to_pub_fn or nano_to_pub   # resolved at call time (nano_to_pub is defined below)
+    try:
+        c = block_info.get('contents', {}) or {}
+        if str(block_info.get('confirmed', '')).lower() != 'true':
+            return 0
+        subtype = str(block_info.get('subtype', '')).lower()
+        if subtype and subtype != 'send':
+            return 0
+        amt = int(block_info.get('amount', '0'))
+        if amt <= 0:
+            return 0
+        if c.get('link_as_account') == to_account:
+            return amt
+        try:
+            if (c.get('link', '') or '').upper() == nano_to_pub_fn(to_account).upper():
+                return amt
+        except Exception:
+            return 0
+        return 0
+    except Exception:
+        return 0
+
+def subscription_seconds(total_raw, price_raw=None, period_s=None):
+    # Ownership time bought by `total_raw`, proportional to the price (time-for-money, like pay-to-pin).
+    price_raw = NAME_PRICE_RAW if price_raw is None else price_raw
+    period_s = NAME_PERIOD_S if period_s is None else period_s
+    return 0 if price_raw <= 0 else int(int(total_raw) * period_s // price_raw)
+
+def valid_name_label(label):
+    # Registrar label policy, enforced at the RELAY door too (defence in depth; also shrinks the homograph
+    # surface): lowercase a-z / 0-9 / hyphen, 3-63 chars, no leading/trailing/double hyphen, not all-digits.
+    if not isinstance(label, str):
+        return False
+    if len(label) < 3 or len(label) > 63:
+        return False
+    if any(c not in _LABEL_ALLOWED for c in label):
+        return False
+    if label[0] == '-' or label[-1] == '-' or '--' in label:
+        return False
+    if label.isdigit():
+        return False
+    return True
+
+_LABEL_ALLOWED = set('abcdefghijklmnopqrstuvwxyz0123456789-')
+
+def is_public_http_url(url):
+    # SSRF guard for a relay-side fetch (e.g. provider proof-of-possession): http/https only, and the host
+    # must resolve ONLY to GLOBAL public unicast IPs. Blocks loopback/private/link-local — including the
+    # 169.254.169.254 cloud-metadata endpoint — plus multicast/reserved/unspecified. Callers should ALSO
+    # disable redirects (a public 302 -> internal defeats a one-time check) and cap the body size. Residual:
+    # DNS rebinding between this check and the fetch (accepted; the fetch only reads bytes and hash-checks).
+    try:
+        u = urllib.parse.urlparse(url)
+        if u.scheme not in ('http', 'https') or not u.hostname:
+            return False
+        port = u.port or (443 if u.scheme == 'https' else 80)
+        infos = socket.getaddrinfo(u.hostname, port, proto=socket.IPPROTO_TCP)
+        if not infos:
+            return False
+        for _fam, _t, _p, _c, sockaddr in infos:
+            ip = ipaddress.ip_address(sockaddr[0])
+            if not ip.is_global or ip.is_multicast or ip.is_reserved or ip.is_unspecified:
+                return False
+        return True
+    except Exception:
+        return False
+
+def paid_lease_decision(cur, anchor, now, grace_s=None):
+    # PURE ownership decision for a PAID claim, BEFORE payment is verified. Given the currently-stored lease
+    # record `cur` (or None) and the new claimant `anchor`, return (allowed, reason):
+    #   * no current lease            -> allow  ('new')
+    #   * same anchor                 -> allow  ('renew')  — owner extends their own subscription
+    #   * different anchor, still paid -> DENY  ('active') — you can't take a live name (collision fix)
+    #   * different anchor, in grace   -> DENY  ('grace')  — lapsed but the owner may still renew
+    #   * different anchor, past grace -> allow ('reclaim')— dormant/expired names return to the pool
+    # This is what makes "another user can't take an existing name" airtight AND lets dormant names expire.
+    grace_s = NAME_GRACE_S if grace_s is None else grace_s
+    if not isinstance(cur, dict) or not cur.get('paid_until'):
+        return True, 'new'
+    pu = float(cur.get('paid_until', 0))
+    if cur.get('anchor') == anchor:
+        return True, 'renew'
+    if now < pu:
+        return False, 'active subscription owned by another key'
+    if now < pu + grace_s:
+        return False, 'in grace period; owner may still renew'
+    return True, 'reclaim'
+
 def anchor_evt_canon(e):
     # The canonical signing preimage for ONE anchor event. Byte-for-byte identical to
     # anchor.py::_canon: type 'anchor-evt', fields anchor, str(seq), prev, authority, op_key, next,

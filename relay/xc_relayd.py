@@ -7,7 +7,7 @@ import json, sys, os, time, threading, sqlite3, urllib.request, random, hashlib,
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import urlparse, parse_qs
+from urllib.parse import urlparse, parse_qs, quote
 import importlib.util
 xc = None                                       # xc_common: relay account + pay-to-pin ledger reads
 _here = os.path.dirname(os.path.abspath(__file__))
@@ -135,6 +135,14 @@ anchors = {}                         # anchor_id (nano_ root address) -> [signed
 leases  = {}                         # label -> winning signed lease; FIRST valid claim per label wins
 cards   = {}                         # label -> signed page card (title/description/tags); NEWEST ts wins,
                                      # only for a name the anchor already owns (see accept_card)
+providers = {}                       # cid -> { url: last_seen_ts } — WHERE the bytes for a content cid can
+                                     # be fetched. This is what demotes a relay from HOST to NAMESERVER: a
+                                     # personal node keeps the bytes and just announces "cid X lives at my
+                                     # URL", so the relay need not store the blob at all. Advisory + UNSIGNED
+                                     # is safe because content is address-by-hash — the client verifies
+                                     # sha256(bytes)==cid no matter who served them, so a lying provider can
+                                     # only waste one fetch, never forge content. Freshness-windowed (see
+                                     # PROVIDER_TTL): entries a node stops re-announcing age out.
 known = {SELF}                       # relays this relay knows about (flat URL set — the legacy wire format)
 # A relay's IDENTITY is its own keypair, not its URL. A relay behind a Cloudflare quick tunnel gets a
 # brand-new hostname on every restart, and a URL-keyed peer set treats each one as a new relay: the
@@ -254,6 +262,12 @@ RELEASE_PIN_KEEP = int(os.environ.get('XC_RELEASE_PIN_KEEP', '3'))   # newest re
 ANCHORS_MAX      = int(os.environ.get('XC_ANCHORS_MAX', '50000'))    # distinct anchors stored (backstop)
 ANCHOR_LOG_MAX   = int(os.environ.get('XC_ANCHOR_LOG_MAX', '1024'))  # events per anchor log (rotation depth)
 LEASES_MAX       = int(os.environ.get('XC_LEASES_MAX', '50000'))     # distinct name leases stored (backstop)
+PROVIDERS_MAX    = int(os.environ.get('XC_PROVIDERS_MAX', '50000'))   # distinct cids with provider hints
+PROVIDER_TTL     = int(os.environ.get('XC_PROVIDER_TTL', '900'))      # a provider entry is fresh for 15 min;
+                                                                       # a personal node re-announces well inside
+                                                                       # this, so dead home boxes age out of the
+                                                                       # directory instead of accumulating
+PROVIDER_URLS_MAX = int(os.environ.get('XC_PROVIDER_URLS_MAX', '16')) # provider URLs kept per cid (evict oldest)
 
 def _cap_dict(d, maxn):
     # Distinct-key backstop: evict oldest-inserted keys until within maxn. Python dicts are
@@ -396,6 +410,34 @@ def _dm_store(m):
         _dm_order = deque(_dms_flat())
     return True
 
+
+def _dm_delete(acc, mids):
+    # TRANSIENT MAILBOX (docs/SOVEREIGN-MAIL): once a recipient has archived a message locally it ACKs by
+    # deleting it here, so a delivered message stops existing on the relay. Only the mailbox OWNER can call
+    # this (ownership is checked at the route), and it only ever removes records from that owner's OWN
+    # bucket — never anyone else's. Records are matched by `mid` (present on every v1/v2 record we mint).
+    # Returns the count removed. _dm_order refs become tombstones (skipped via _dm_seen), squeezed lazily.
+    global _dm_order
+    want = set(m for m in mids if m)
+    bucket = dms_by_to.get(acc)
+    if not want or not bucket:
+        return 0
+    removed = 0
+    keep = []
+    for rec in bucket:
+        if rec.get('mid') in want:
+            _dm_forget(rec); removed += 1
+        else:
+            keep.append(rec)
+    if removed:
+        if keep:
+            dms_by_to[acc] = keep
+        else:
+            dms_by_to.pop(acc, None)
+        if len(_dm_order) > 2 * _dm_total + 64:           # squeeze out accumulated tombstones
+            _dm_order = deque(_dms_flat())
+    return removed
+
 # Reading a mailbox: prove you own it.
 #
 # /dm returns records whose BODIES are sealed but whose `to`, `from` and `ts` are not, so serving
@@ -467,6 +509,7 @@ PIN_DAYS_PER_XNO = float(os.environ.get('XC_PIN_DAYS_PER_XNO', '30000'))       #
 _PIN_S_PER_RAW = PIN_DAYS_PER_XNO * 86400.0 / 1e30
 pinned = {}                          # cid -> pin-expiry epoch (paid); survives eviction until then
 pins_paid = {}                       # payment block hash -> cid (consumed once; audit + no double-claim)
+name_pays_used = {}                   # payment block hash -> label (a name-subscription payment, spent once)
 blob_meta = {}                       # cid -> {'size','last','tips','reports'} — small RAM eviction index
 
 # Moderation as a NEGATIVE value signal. A signed community report cancels some of a post's tip-value,
@@ -912,16 +955,31 @@ def accept_anchor(m):
         return False, res
     aid = res['anchor']
     cur = anchors.get(aid)
+    new_sorted = sorted(events, key=lambda e: int(e.get('seq', -1)))
     if cur is not None:
-        try:
-            cur_tip = max((int(x.get('seq', -1)) for x in cur), default=-1)
-        except Exception:
-            cur_tip = -1
-        if int(res['seq']) <= cur_tip:
-            return False, 'not newer than stored log (tip seq %d)' % cur_tip
+        cur_sorted = sorted(cur, key=lambda e: int(e.get('seq', -1)))
+        # Where do the two valid logs first differ? (both share ev0 — only the root key can sign an
+        # inception for this anchor, so the inception is always identical.)
+        div = None
+        for i in range(min(len(cur_sorted), len(new_sorted))):
+            if _anchor_event_hash(new_sorted[i]) != _anchor_event_hash(cur_sorted[i]):
+                div = i
+                break
+        if div is None:
+            # No divergence: one log is a prefix of the other. APPEND-ONLY — accept only a strictly LONGER
+            # extension (a real rotation/recovery), never a shorter or equal rewrite.
+            if len(new_sorted) <= len(cur_sorted):
+                return False, 'not newer than stored log'
+        else:
+            # The logs FORK at seq `div`. A pre-rotation fork — which a stolen OPERATIONAL key can forge —
+            # must NEVER displace stored history. ONLY a ROOT recovery may override, because a root event
+            # requires the cold root key the attacker does not have. This is what lets the true owner
+            # reclaim an anchor a relay wrongly accepted a fork for, while a plain fork can never win.
+            if not (new_sorted[div].get('authority') == 'root' and cur_sorted[div].get('authority') != 'root'):
+                return False, 'log fork rejected: diverges from stored history without root-recovery precedence'
     if cur is None and len(anchors) >= ANCHORS_MAX:
         return False, 'anchor cap'
-    anchors[aid] = events
+    anchors[aid] = new_sorted
     _cap_dict(anchors, ANCHORS_MAX)
     mark_dirty()
     return True, 'stored seq %s' % res['seq']
@@ -989,6 +1047,172 @@ def accept_card(m):
     mark_dirty()
     return True, 'stored'
 
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    # A public URL that 302s to http://127.0.0.1 or http://169.254.169.254 would defeat the SSRF check, so
+    # we refuse to follow ANY redirect during proof-of-possession.
+    def redirect_request(self, *a, **k):
+        return None
+
+_POSSESSION_OPENER = urllib.request.build_opener(_NoRedirect())
+
+def _provider_serves_cid(cid, url):
+    # PROOF-OF-POSSESSION (FINDING [5]). Before a NEW (cid,url) provider claim is stored, WE fetch it and
+    # confirm the url actually serves the sha256 bytes for cid — so a bogus url can't be registered to
+    # steer every resolver of cid to an attacker box (IP + cid leak) or evict the real provider off the
+    # PROVIDER_URLS_MAX list. Guarded against becoming an SSRF/DoS lever: the host must resolve to a PUBLIC
+    # ip (xc.is_public_http_url — blocks loopback/private/link-local incl. 169.254.169.254 metadata), we
+    # follow NO redirects, use an 8s timeout, and cap the body at MAX_BLOB. Residual (accepted): a per-op
+    # timeout doesn't bound a slow drip, and DNS rebinding after the check — both only cost this relay a
+    # bounded read, never a forged page (the resolver still hash-checks). Wire shape matches GET /blob.
+    if not cid.startswith('sha256-'):
+        return False                                 # only sha256 cids are self-verifiable stdlib-only
+    if xc is None or not xc.is_public_http_url(url):
+        return False                                 # SSRF guard: refuse non-public / non-http targets
+    want = cid.split('sha256-', 1)[1]
+    fetch = url + ('&' if '?' in url else '?') + 'cid=' + quote(cid, safe='')
+    try:
+        resp = _POSSESSION_OPENER.open(fetch, timeout=8)
+        raw = resp.read(MAX_BLOB + 1)                # cap: reject anything larger than a max blob
+        if len(raw) > MAX_BLOB:
+            return False
+        b64 = (json.loads(raw) or {}).get('b64') or ''
+        data = base64.b64decode(b64, validate=False)
+        return hashlib.sha256(data).hexdigest() == want
+    except Exception:
+        return False
+
+def accept_provide(m):
+    # Register a PROVIDER: "the bytes for content <cid> can be fetched at <url>". A resolver that fetches
+    # re-checks sha256(bytes)==cid, so a bogus url can never yield a forged page — BUT an unauthenticated
+    # claim still steers every resolver to an attacker-chosen box (leaking each viewer's IP + the cid) and
+    # can evict the real provider off the PROVIDER_URLS_MAX list. So a NEW (cid,url) pair is stored only
+    # after PROOF-OF-POSSESSION: we fetch it ourselves and confirm it serves the cid's bytes (FINDING [5],
+    # _provider_serves_cid). A refresh of a url already listed for the cid just re-stamps it (no re-fetch).
+    # Returns (accepted, info).
+    if not isinstance(m, dict):
+        return False, 'bad body'
+    cid = str(m.get('cid', ''))
+    url = str(m.get('url', ''))
+    if not cid or len(cid) > 128:
+        return False, 'bad cid'
+    if not (url.startswith('http://') or url.startswith('https://')) or len(url) > 256:
+        return False, 'bad url'
+    now = time.time()
+    urls = providers.get(cid)
+    is_new = urls is None or url not in urls         # only a not-yet-listed pair needs verification
+    if is_new and not _provider_serves_cid(cid, url):
+        return False, 'provider did not serve the cid'
+    if urls is None:
+        if len(providers) >= PROVIDERS_MAX:
+            _cap_dict(providers, PROVIDERS_MAX)      # oldest-cid backstop
+        urls = providers[cid] = {}
+    urls[url] = now
+    if len(urls) > PROVIDER_URLS_MAX:                # keep the most-recently-seen URLs for this cid
+        for dead in sorted(urls, key=urls.get)[:len(urls) - PROVIDER_URLS_MAX]:
+            urls.pop(dead, None)
+    mark_dirty()
+    return True, 'stored'
+
+def _known_relay_accounts():
+    # Accounts a name-subscription payment may be sent to: THIS relay plus every peer relay we know. The
+    # payer pays whichever relays are live and we sum confirmed sends to ANY of them — so a down relay
+    # neither blocks a registration nor can withhold a name (relay-down resilience).
+    accts = set(peers_by_acct.keys())
+    if RELAY_ACCT:
+        accts.add(RELAY_ACCT)
+    return accts
+
+def accept_paid_lease(m):
+    # The REGISTRAR path: a PAID subscription lease. Ownership = an active subscription proven by on-chain
+    # payment TO THE RELAYS (revenue that funds serving, not a burn); the ANCHOR signs it (the payer need
+    # not be the anchor — a privacy property). Steps: (1) root signature over paid_lease_canon; (2) the
+    # ownership decision (collision/renew/grace/reclaim, pure in xc_common); (3) verify payments — each
+    # cited block is a CONFIRMED send to a known relay account, consumed once — sum to subscription time.
+    # Every relay verifies the ledger INDEPENDENTLY, so a lying relay is caught and forks can't persist.
+    # NOTE: a paid lease supersedes a legacy FREE lease (the registrar is the authority going forward).
+    # FINDING [10] (accepted): a relay operator can self-pay for names by sending to its own account — inherent to any paid registry.
+    # Returns (accepted, info).
+    if xc is None:
+        return False, 'crypto unavailable'
+    if not isinstance(m, dict):
+        return False, 'bad body'
+    label, anchor = m.get('label', ''), m.get('anchor', '')
+    pub, sig = m.get('pub', ''), m.get('sig', '')
+    pays = m.get('payments') or []
+    if not label or not anchor or not pub or not sig:
+        return False, 'missing fields'
+    if not xc.valid_name_label(label):
+        return False, 'invalid name (a-z 0-9 hyphen, 3-63, no edge/double hyphen, not all-digits)'
+    if not isinstance(pays, list) or not pays:
+        return False, 'no payments cited'
+    try:
+        if xc.pub_to_addr(pub) != anchor:
+            return False, 'lease not signed by the anchor root key'
+        if not xc.verify_msg(pub, xc.paid_lease_canon(m), sig):
+            return False, 'bad lease signature'
+    except Exception as ex:
+        return False, str(ex)
+    now = time.time()
+    cur = leases.get(label)
+    allowed, why = xc.paid_lease_decision(cur, anchor, now)
+    if not allowed:
+        return False, why
+    known = _known_relay_accounts()
+    if not known:
+        return False, 'relay has no account to receive payment'
+    total, fresh, seen = 0, [], set()
+    for h in pays:
+        if not isinstance(h, str) or not h or h in name_pays_used or h in seen:
+            continue                                     # malformed, already spent, or REPEATED in this lease
+        seen.add(h)                                      # dedupe within this lease so one payment can't count twice
+        try:
+            bi = xc.rpc({'action': 'block_info', 'json_block': 'true', 'hash': h})
+        except Exception:
+            continue
+        amt = 0
+        for acct in known:
+            amt = xc.confirmed_send_raw(bi, acct)
+            if amt:
+                break
+        if amt:
+            total += amt
+            fresh.append(h)
+    if total <= 0:
+        # idempotent: the owner already holds this exact active record (e.g. a backfill re-post)
+        if isinstance(cur, dict) and cur.get('anchor') == anchor and cur.get('paid_until'):
+            return True, 'already active'
+        return False, 'no confirmed payment to a relay account'
+    granted = xc.subscription_seconds(total)
+    if granted <= 0:
+        return False, 'payment below minimum'
+    base = now
+    if isinstance(cur, dict) and cur.get('anchor') == anchor:
+        base = max(now, float(cur.get('paid_until', 0)))  # renewal extends from the current end, not now
+    paid_until = base + granted
+    for h in fresh:
+        name_pays_used[h] = label
+    leases[label] = {'label': label, 'anchor': anchor, 'pub': pub, 'sig': sig, 'paid': True,
+                     'payments': pays, 'ts': int(m.get('ts', now)),
+                     'period_start': m.get('period_start', ''), 'period_end': m.get('period_end', ''),
+                     'paid_until': paid_until}
+    _cap_dict(leases, LEASES_MAX)
+    mark_dirty()
+    return True, 'paid until %d' % int(paid_until)
+
+def fresh_providers(cid):
+    # The still-fresh provider URLs for a cid, newest-first. Prunes anything past PROVIDER_TTL as a
+    # side effect so a directory of dead home boxes never accumulates.
+    now = time.time()
+    urls = providers.get(cid)
+    if not urls:
+        return []
+    for u in [u for u, ts in urls.items() if now - ts > PROVIDER_TTL]:
+        urls.pop(u, None)
+    if not urls:
+        providers.pop(cid, None)
+        return []
+    return sorted(urls, key=urls.get, reverse=True)
+
 def backfill():
     # SYNC ON JOIN. bootstrap() learns the peer list but pulls no content, so a freshly launched
     # relay used to come up blank and only accumulate what was pushed to it AFTER joining — it never
@@ -1034,7 +1258,13 @@ def backfill():
         except Exception:
             continue
         for m in d.get('leases', []):
-            accept_lease(m)
+            # a PAID lease is signed over paid_lease_canon + carries payments; route it to the registrar
+            # path so this relay re-verifies the on-chain payment itself. Legacy free leases take the
+            # first-claim path. Both live in the same `leases` dict.
+            if isinstance(m, dict) and (m.get('paid') or m.get('payments')):
+                accept_paid_lease(m)
+            else:
+                accept_lease(m)
     # --- cards: page metadata for search. MUST run AFTER the lease loop above — accept_card refuses a
     # card whose leased name we don't yet hold — and every card is re-verified (root sig + ownership),
     # newest-ts wins. ---
@@ -1141,7 +1371,8 @@ def blob_credit(cid, payhash):
 # (in-memory before this meant comments, uploaded media, likes, poll votes vanished on restart)
 _STATE_KEYS = ('engage', 'notifs', 'supporters', 'follows', 'comments',   # blobs now live in SQLite
                'releases', 'profiles', 'dmkeys', 'pollvotes', 'reports', 'pinned', 'pins_paid',
-               'tips_paid', 'revocations', 'scores', 'games_dir', 'anchors', 'leases', 'cards')
+               'tips_paid', 'revocations', 'scores', 'games_dir', 'anchors', 'leases', 'cards',
+               'providers', 'name_pays_used')
 # DMs are persisted SEPARATELY (not via the generic loop above): on disk they stay a FLAT `dms` list in
 # arrival order — so an OLDER relay can still read a store this one writes — and load() re-buckets them.
 
@@ -1402,6 +1633,78 @@ def relaykey_record():
         return None
     return {'account': ID_ACCT, 'pub': READ_SIG_PUB, 'read_pk': READ_PK,
             'ts': READ_TS, 'sig': READ_SIG, 'caps': 'r1'}
+
+# --- registrar PUSH notices (the relay is itself a mail sender) ------------------------------------
+# As a name subscription nears expiry the relay seals a renewal reminder to the owner's published DM key
+# and drops it in their mailbox — a real push, received in Mail like any message (see docs/SOVEREIGN-MAIL).
+# It uses a DM key derived from the relay identity, published under the relay account so a client verifies
+# the sender. First concrete piece of the transient-mailbox email service.
+RENEWAL_SWEEP_S = int(os.environ.get('XC_RENEWAL_SWEEP_S', '3600'))   # scan for expiring subscriptions hourly
+RELAY_DM_SK = RELAY_DM_PUB = ''
+_renew_notified = {}                                                   # label -> period_end already notified
+if _NACL and ID_KEY and xc is not None:
+    try:
+        _dm_seed = hashlib.blake2b(bytes.fromhex(ID_KEY) + b'xchat-dm', digest_size=32).digest()
+        RELAY_DM_SK = _NaPriv(_dm_seed)
+        RELAY_DM_PUB = bytes(RELAY_DM_SK.public_key).hex()
+        _dts = int(time.time())
+        _dl = dict(kv.split(' ', 1) for kv in
+                   xc._sign_lines(ID_KEY, xc.sig_canon('dmkey', ID_ACCT, str(_dts), RELAY_DM_PUB)))
+        dmkeys[ID_ACCT] = {'account': ID_ACCT, 'dm_pk': RELAY_DM_PUB, 'ts': _dts, 'caps': 's1',
+                           'sig': _dl.get('sig', ''), 'pub': _dl.get('pub', ID_PUB)}
+    except Exception:
+        RELAY_DM_SK = RELAY_DM_PUB = ''
+
+def _send_renewal_notice(owner_acct, label, days):
+    # Seal a renewal reminder to the owner's DM key and store it in their mailbox (a v1 record: the sender
+    # is the relay, not secret). Returns True if sent. No-op if the owner has not enabled mail.
+    if not (RELAY_DM_SK and RELAY_DM_PUB):
+        return False
+    rec = dmkeys.get(owner_acct)
+    if not isinstance(rec, dict) or not rec.get('dm_pk'):
+        return False
+    try:
+        box = _NaBox(RELAY_DM_SK, _NaPub(bytes.fromhex(rec['dm_pk'])))
+        text = ('Your domain nano://%s expires in %d day(s). Renew it from your wallet to keep it.' % (label, days)
+                if days > 0 else
+                'Your domain nano://%s has LAPSED and is in its grace period — renew now to keep it.' % label)
+        ct = base64.b64encode(bytes(box.encrypt(text.encode()))).decode()
+        m = {'to': owner_acct, 'from': ID_ACCT, 'from_pk': RELAY_DM_PUB, 'ct': ct,
+             'ts': int(time.time()), 'kind': 'renewal', 'mid': hashlib.sha256(
+                 (label + str(rec.get('ts'))).encode()).hexdigest()[:16]}
+        if _dm_store(m):
+            mark_dirty()
+        return True
+    except Exception:
+        return False
+
+def _renewal_sweep():
+    # Notify owners whose paid subscription is within the renew window (expiring) or lapsed but in grace,
+    # once per period. Owners without a published DM key are skipped (the wallet still shows the countdown).
+    now = time.time()
+    win, grace = xc.NAME_RENEW_WINDOW_S, xc.NAME_GRACE_S
+    for label, lz in list(leases.items()):
+        if not isinstance(lz, dict) or not lz.get('paid'):
+            continue
+        pu = float(lz.get('paid_until', 0))
+        if pu <= 0:
+            continue
+        expiring = 0 < (pu - now) <= win
+        in_grace = 0 <= (now - pu) < grace
+        if not (expiring or in_grace) or _renew_notified.get(label) == int(pu):
+            continue
+        if _send_renewal_notice(lz.get('anchor', ''), label, int((pu - now) // 86400) if expiring else 0):
+            _renew_notified[label] = int(pu)
+
+def _renewal_loop():
+    while True:
+        time.sleep(RENEWAL_SWEEP_S)
+        try:
+            _renewal_sweep()
+        except Exception:
+            pass
+if _NACL and ID_KEY and xc is not None:
+    threading.Thread(target=_renewal_loop, daemon=True).start()
 
 def _announce_canon(acct, url, ts):
     return xc.sig_canon('relay_announce', acct, url, str(ts))
@@ -1850,6 +2153,23 @@ class H(BaseHTTPRequestHandler):
                                         'tier': ('mesh' if _am_mesh() else 'stable'),
                                         'stable_replicas': STABLE_REPLICAS, 'mesh_replicas': MESH_REPLICAS,
                                         'stable_relays': len(stable), 'mesh_relays': len(mesh)}))
+        elif self.path.startswith('/providers'):
+            # WHERE to fetch a content cid's bytes: the personal nodes that announced they hold it,
+            # freshest first. The client tries these (verifying the hash) before falling back to this
+            # relay's own /blob cache — so the bytes can live on the owner's machine, not here.
+            cid = qs(self.path).get('cid', '')
+            urls = fresh_providers(cid)
+            self._send(200, json.dumps({'cid': cid, 'providers': urls,
+                                        'cached_here': blob_has(cid)}))
+        elif self.path.startswith('/price'):
+            # REGISTRAR fee, set by THIS relay's operator (XC_NAME_PRICE_RAW). The client reads each
+            # relay's price and pays it to that relay's account — so the fee is operator-settable and
+            # competition-driven (pay the cheaper live relays); richer schemes (median, market) layer on
+            # top later. `account` is where to send this relay's share.
+            self._send(200, json.dumps({'account': RELAY_ACCT, 'price_raw': str(xc.NAME_PRICE_RAW) if xc else '0',
+                                        'period_s': xc.NAME_PERIOD_S if xc else 0,
+                                        'grace_s': xc.NAME_GRACE_S if xc else 0,
+                                        'renew_window_s': xc.NAME_RENEW_WINDOW_S if xc else 0}))
         elif self.path.startswith('/haveblob'):
             cid = qs(self.path).get('cid', '')
             self._send(200, json.dumps({'cid': cid, 'have': blob_has(cid),
@@ -1933,6 +2253,8 @@ class H(BaseHTTPRequestHandler):
                 c = cards.get(lb) or {}                   # signed page card for this leased name, if any
                 return {'label': lb, 'anchor': (lv or {}).get('anchor', ''),
                         'ts': int((lv or {}).get('ts', 0)),
+                        'paid': bool((lv or {}).get('paid')),          # registrar: is this a paid subscription?
+                        'paid_until': int((lv or {}).get('paid_until', 0)),  # 0 = free/legacy lease
                         'title': c.get('title', ''), 'description': c.get('description', ''),
                         'tags': c.get('tags', '')}
             items = [_lease_item(lb, lv) for lb, lv in leases.items() if isinstance(lv, dict)]
@@ -2204,6 +2526,36 @@ class H(BaseHTTPRequestHandler):
                 # A malformed/undecryptable envelope reveals nothing to seal back to, so answer in the
                 # clear — the caller learns its request never opened. No mailbox contents are exposed.
                 self._send(400, json.dumps({'error': 'bad sealed read: %s' % e}))
+        elif self.path.startswith('/dm_delete'):
+            # TRANSIENT MAILBOX ACK (docs/SOVEREIGN-MAIL): the recipient has archived these messages
+            # locally and now clears them from the relay. Body {account, mids, ts, sig, pub}; the signature
+            # (over sig_canon('dmdelete', acc, ts, sha256(sorted mids))) proves mailbox OWNERSHIP and binds
+            # the exact mid set, so a captured token can neither delete a different set nor another mailbox.
+            # Only the caller's OWN bucket is touched. MUST be matched before '/dm'.
+            try:
+                m = json.loads(raw or '{}')
+                acc = m.get('account', '')
+                mids = m.get('mids') or []
+                ts, sig, pub = m.get('ts', ''), m.get('sig', ''), m.get('pub', '')
+                if not (isinstance(mids, list) and acc and sig and pub and ts != ''):
+                    self._send(400, json.dumps({'ok': False, 'error': 'account, mids, ts, sig, pub required'})); return
+                try:
+                    ts_i = int(ts)
+                except (TypeError, ValueError):
+                    self._send(400, json.dumps({'ok': False, 'error': 'bad ts'})); return
+                if abs(time.time() - ts_i) > DM_SIG_WINDOW:      # bearer-token lifetime, same bound as reads
+                    self._send(400, json.dumps({'ok': False, 'error': 'signature expired'})); return
+                mids = [str(x) for x in mids]
+                mids_h = hashlib.sha256('\n'.join(sorted(set(mids))).encode()).hexdigest()
+                if xc.pub_to_addr(pub) != acc or not xc.verify_msg(
+                        pub, xc.sig_canon('dmdelete', acc, ts_i, mids_h), sig):
+                    self._send(403, json.dumps({'ok': False, 'error': 'bad signature'})); return
+                removed = _dm_delete(acc, mids)
+                if removed:
+                    mark_dirty()
+                self._send(200, json.dumps({'ok': True, 'removed': removed}))
+            except Exception as e:
+                self._send(400, json.dumps({'ok': False, 'error': str(e)}))
         elif self.path.startswith('/dm'):
             # store an encrypted DM (O(1) dedup by _dm_key: `mid` for sealed v2, else (from, ts)). The relay
             # only holds ciphertext. Bucketed by recipient and bounded per-mailbox (DM_PER_ACCT), by distinct
@@ -2226,6 +2578,106 @@ class H(BaseHTTPRequestHandler):
             # tampered log never enters. Newest-valid-longest wins (see accept_anchor).
             try:
                 ok, info = accept_anchor(json.loads(raw or '{}'))
+                self._send(200 if ok else 400, json.dumps({'ok': ok, 'info': info}))
+            except Exception as e:
+                self._send(400, json.dumps({'ok': False, 'error': str(e)}))
+        elif self.path.startswith('/provide'):
+            # A personal node announcing "I hold content <cid> at <url>". Unauthenticated by design (see
+            # accept_provide) — content is address-by-hash, so the fetcher's own sha256 check is the
+            # security boundary, not who registered the hint. Nodes re-POST this on a heartbeat.
+            try:
+                ok, info = accept_provide(json.loads(raw or '{}'))
+                self._send(200 if ok else 400, json.dumps({'ok': ok, 'info': info}))
+            except Exception as e:
+                self._send(400, json.dumps({'ok': False, 'error': str(e)}))
+        elif self.path.startswith('/forward'):
+            # PRIVACY (finding [6]): a client submits a SIGNED write THROUGH this relay, which fans it out to
+            # the other relays server-to-server. Those relays then see THIS relay's IP, not the client's — so
+            # no relay except this one can link the client's IP to the (domain, payment). The write is self-
+            # authenticating (signed), so forwarding can forge nothing; it is restricted to write paths and
+            # fans out ONLY to KNOWN relays (never an open proxy). Residual: this relay still sees the client
+            # IP + body — full unlinkability needs a sealed onion (Layer-B mix), tracked separately.
+            try:
+                m = json.loads(raw or '{}')
+                path = str(m.get('path', ''))
+                body = m.get('body')
+                acc = {'/paidlease': accept_paid_lease, '/lease': accept_lease, '/card': accept_card,
+                       '/anchor': accept_anchor, '/provide': accept_provide}.get(path)
+                if acc is None or not isinstance(body, (dict, list)):
+                    self._send(400, json.dumps({'ok': False, 'error': 'unforwardable path/body'}))
+                else:
+                    ok_local, info = acc(body)                       # process on this relay
+                    payload = json.dumps(body).encode()
+                    fanned = 0
+                    for url in [u for u in _serve_relays() if u != SELF and '/r/' not in u
+                                and '127.0.0.1' not in u and 'localhost' not in u]:
+                        try:
+                            urllib.request.urlopen(urllib.request.Request(
+                                url + path, payload, {'Content-Type': 'application/json'}), timeout=10).read()
+                            fanned += 1
+                        except Exception:
+                            pass
+                    self._send(200, json.dumps({'ok': ok_local, 'info': info, 'fanned_to': fanned}))
+            except Exception as e:
+                self._send(400, json.dumps({'ok': False, 'error': str(e)}))
+        elif self.path.startswith('/relay_sealed'):
+            # SEALED ONION forwarder (finding [6]): relay an OPAQUE sealed envelope to the destination
+            # relay's /sealed_submit. We CANNOT read it (it is sealed to the destination's read key) — we
+            # learn only the client's IP and which relay it is destined for, never the domain/payment.
+            # Restricted to KNOWN relays (never an open proxy).
+            try:
+                m = json.loads(raw or '{}')
+                to = str(m.get('to', '')).rstrip('/')
+                env = m.get('env')
+                known_norm = {u.rstrip('/') for u in _serve_relays()}
+                if to not in known_norm or not isinstance(env, dict):
+                    self._send(400, json.dumps({'ok': False, 'error': 'unknown destination relay'}))
+                else:
+                    resp = urllib.request.urlopen(urllib.request.Request(
+                        to + '/sealed_submit', json.dumps(env).encode(),
+                        {'Content-Type': 'application/json'}), timeout=20).read()
+                    self._send(200, resp.decode() if isinstance(resp, bytes) else json.dumps({'ok': True}))
+            except Exception as e:
+                self._send(400, json.dumps({'ok': False, 'error': str(e)}))
+        elif self.path.startswith('/sealed_submit'):
+            # SEALED ONION destination (finding [6]): a write sealed to THIS relay's read key, handed to us
+            # by a forwarding relay that could not read it. We open it, process the inner write, and fan it
+            # out to the other relays. The forwarder saw the client IP but not the write; we see the write
+            # but only the forwarder's IP — so no single relay links the client IP to the (domain, payment).
+            if not (_NACL and READ_SK):
+                self._send(404, json.dumps({'ok': False, 'error': 'sealed submit unavailable'}))
+            else:
+                try:
+                    env = json.loads(raw or '{}')
+                    epk = _NaPub(bytes.fromhex(env['epk']))
+                    inner = json.loads(_NaBox(READ_SK, epk).decrypt(base64.b64decode(env['ct'])))
+                    path = str(inner.get('path', ''))
+                    body = inner.get('body')
+                    acc = {'/paidlease': accept_paid_lease, '/lease': accept_lease, '/card': accept_card,
+                           '/anchor': accept_anchor, '/provide': accept_provide}.get(path)
+                    if acc is None or not isinstance(body, (dict, list)):
+                        self._send(400, json.dumps({'ok': False, 'error': 'unforwardable inner write'}))
+                    else:
+                        ok_local, info = acc(body)
+                        payload = json.dumps(body).encode()
+                        fanned = 0
+                        for url in [u for u in _serve_relays() if u != SELF and '/r/' not in u
+                                    and '127.0.0.1' not in u and 'localhost' not in u]:
+                            try:
+                                urllib.request.urlopen(urllib.request.Request(
+                                    url + path, payload, {'Content-Type': 'application/json'}), timeout=10).read()
+                                fanned += 1
+                            except Exception:
+                                pass
+                        self._send(200, json.dumps({'ok': ok_local, 'info': info, 'fanned_to': fanned}))
+                except Exception as e:
+                    self._send(400, json.dumps({'ok': False, 'error': 'bad sealed submit: %s' % e}))
+        elif self.path.startswith('/paidlease'):
+            # REGISTRAR: a PAID subscription lease. VERIFIED here — root signature, ownership decision
+            # (collision/renew/grace/reclaim), and on-chain payment(s) to relay account(s). See
+            # accept_paid_lease. Must precede '/lease' (a prefix of neither, but be explicit).
+            try:
+                ok, info = accept_paid_lease(json.loads(raw or '{}'))
                 self._send(200 if ok else 400, json.dumps({'ok': ok, 'info': info}))
             except Exception as e:
                 self._send(400, json.dumps({'ok': False, 'error': str(e)}))
