@@ -2459,6 +2459,36 @@ class H(BaseHTTPRequestHandler):
                 self._send(200 if ok else 400, json.dumps({'ok': ok, 'info': info}))
             except Exception as e:
                 self._send(400, json.dumps({'ok': False, 'error': str(e)}))
+        elif self.path.startswith('/forward'):
+            # PRIVACY (finding [6]): a client submits a SIGNED write THROUGH this relay, which fans it out to
+            # the other relays server-to-server. Those relays then see THIS relay's IP, not the client's — so
+            # no relay except this one can link the client's IP to the (domain, payment). The write is self-
+            # authenticating (signed), so forwarding can forge nothing; it is restricted to write paths and
+            # fans out ONLY to KNOWN relays (never an open proxy). Residual: this relay still sees the client
+            # IP + body — full unlinkability needs a sealed onion (Layer-B mix), tracked separately.
+            try:
+                m = json.loads(raw or '{}')
+                path = str(m.get('path', ''))
+                body = m.get('body')
+                acc = {'/paidlease': accept_paid_lease, '/lease': accept_lease, '/card': accept_card,
+                       '/anchor': accept_anchor, '/provide': accept_provide}.get(path)
+                if acc is None or not isinstance(body, (dict, list)):
+                    self._send(400, json.dumps({'ok': False, 'error': 'unforwardable path/body'}))
+                else:
+                    ok_local, info = acc(body)                       # process on this relay
+                    payload = json.dumps(body).encode()
+                    fanned = 0
+                    for url in [u for u in _serve_relays() if u != SELF and '/r/' not in u
+                                and '127.0.0.1' not in u and 'localhost' not in u]:
+                        try:
+                            urllib.request.urlopen(urllib.request.Request(
+                                url + path, payload, {'Content-Type': 'application/json'}), timeout=10).read()
+                            fanned += 1
+                        except Exception:
+                            pass
+                    self._send(200, json.dumps({'ok': ok_local, 'info': info, 'fanned_to': fanned}))
+            except Exception as e:
+                self._send(400, json.dumps({'ok': False, 'error': str(e)}))
         elif self.path.startswith('/paidlease'):
             # REGISTRAR: a PAID subscription lease. VERIFIED here — root signature, ownership decision
             # (collision/renew/grace/reclaim), and on-chain payment(s) to relay account(s). See
