@@ -173,7 +173,7 @@ elif mode == 'publish':
     # download spin-and-fail). It is NOT in the signed canon and NOT the root of trust: the app accepts the
     # bytes only if they match `sha256` above, and falls back to the relays if the mirror is wrong/down.
     mirror = os.environ.get('XC_RELEASE_URL', '') or \
-        'https://raw.githubusercontent.com/stefanbx/xchat-alpha/master/apk/xchat-alpha.apk'
+        'https://raw.githubusercontent.com/stefanbx/punte/master/apk/xchat-alpha.apk'
     if mirror:
         rec['url'] = mirror
     pushed = post('/release', rec)

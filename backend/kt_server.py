@@ -40,8 +40,8 @@ except Exception:
     DOWNLOAD_PAGE = ('<!doctype html><meta charset=utf-8><title>Punte</title>'
                      '<body style="background:#050607;color:#eef3f7;font-family:sans-serif;text-align:center;padding:14vh 6vw">'
                      '<h1>Punte</h1><p>A censorship-free X on the Nano ledger.</p>'
-                     '<p><a style="color:#2ca6e0" href="https://github.com/stefanbx/xchat-alpha/raw/master/apk/xchat-alpha.apk">Download the Android APK</a></p>'
-                     '<p><a style="color:#2ca6e0" href="https://github.com/stefanbx/xchat-alpha">Source &amp; checksums</a></p></body>')
+                     '<p><a style="color:#2ca6e0" href="https://github.com/stefanbx/punte/raw/master/apk/xchat-alpha.apk">Download the Android APK</a></p>'
+                     '<p><a style="color:#2ca6e0" href="https://github.com/stefanbx/punte">Source &amp; checksums</a></p></body>')
 DOWNLOAD_PATHS = ('/', '/download', '/get', '/app')
 
 # The one-command relay installer, served next to the download page so the short, memorable
@@ -1082,7 +1082,7 @@ class H(BaseHTTPRequestHandler):
         if self.command in ('GET', 'HEAD') and u.path in RELAY_INSTALL_PATHS:   # one-command relay installer
             if not RELAY_INSTALLER:
                 return self._send_text('# installer not staged on this node; see\n'
-                                       '# https://github.com/stefanbx/xchat-alpha/blob/master/relay/install-relay.sh\n', 404)
+                                       '# https://github.com/stefanbx/punte/blob/master/relay/install-relay.sh\n', 404)
             return self._send_text(RELAY_INSTALLER)
         if not u.path.startswith('/api/') and u.path != '/':   # /api/* is kt_server's; the rest is the relay's
             return self._proxy_relay(raw)

@@ -136,7 +136,7 @@ NODE_FILES="kt_server.py xc_announce.py xc_attest.py xc_blobput.py xc_blockproc.
 xc_common.py xc_dm.py xc_engage.py xc_feed.py xc_follows.py xc_gossip.py xc_heads_seed.py xc_labels.py
 xc_media.py xc_notify.py xc_pin.py xc_poll.py xc_post.py xc_profile.py xc_reldir.py xc_release.py
 xc_report.py xc_supporter.py xc_unfurl.py xc_workd.py"
-SRC="${XC_SRC:-https://raw.githubusercontent.com/stefanbx/xchat-alpha/master}"
+SRC="${XC_SRC:-https://raw.githubusercontent.com/stefanbx/punte/master}"
 # `-` not `:-`: XC_BOOTSTRAP='' explicitly means "peer with nobody" (isolated/test installs), which
 # matters because a relay announces itself to its bootstraps the moment it starts.
 BOOTSTRAP="${XC_BOOTSTRAP-https://xchat-alpha-node.fly.dev https://xchat-relay-1.fly.dev}"
