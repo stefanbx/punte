@@ -1,5 +1,5 @@
 #!/bin/bash
-# An independent public ӾChat relay (second host, for SPOF-free discovery).
+# An independent public Punte relay (second host, for SPOF-free discovery).
 export BIND_HOST=0.0.0.0
 # The relay's payout account (pay-to-pin + the 10% media tip split). XC_DEV=1 keeps the historical
 # behaviour — a DEMO account derived from a fixed byte, whose key anyone can derive from the repo, so

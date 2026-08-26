@@ -2,7 +2,7 @@
 # Sign the in-app announcement banner for the current release.
 #
 # The banner is a publisher-signed record the app shows above the feed. Nothing tied it to a release,
-# so it went stale the obvious way: it sat advertising "ӾChat 2.3.9 is live — tap to update" through
+# so it went stale the obvious way: it sat advertising "Punte 2.3.9 is live — tap to update" through
 # three releases while the update check correctly offered 2.4.3. Two sources of truth about the
 # current version, one of them hand-maintained, is the whole bug. stamp-release.sh now runs this, so
 # the release stamps both.
@@ -80,7 +80,7 @@ def main():
         with open(CUSTOM, encoding='utf-8') as f:
             text = f.read().strip()
     else:
-        text = f'ӾChat {ver} is live — tap to update.'
+        text = f'Punte {ver} is live — tap to update.'
     if ver not in text:
         sys.exit(f'announcement: the text does not mention v{ver}, so --check would call it stale the '
                  f'moment it shipped. Fix {CUSTOM}.')

@@ -1,4 +1,4 @@
-# Knot node front (Cloudflare Worker)
+# Punte node front (Cloudflare Worker)
 
 A stable, short, free `workers.dev` hostname that reverse-proxies to a home node whose public URL
 churns (a Cloudflare quick tunnel). The current backend origin lives in KV key `backend`, refreshed by

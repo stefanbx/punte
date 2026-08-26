@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# ӾChat backend node — a small, hostable HTTP server that bridges the app to the network.
+# Punte backend node — a small, hostable HTTP server that bridges the app to the network.
 #
 # Pure Python: it exposes the /api/* routes by delegating to the helper scripts alongside it
 # (xc_feed.py, xc_post.py, xc_reldir.py, ...) and signs with nanopy (ed25519-blake2b). Anyone can
@@ -30,22 +30,22 @@ import xc_games                                              # signed game leade
 import xc_unfurl                                             # link previews — network+parse, no seed, no /tmp
 
 # Human landing / download page, served on the node's PUBLIC url (/, /download, /get, /app). The node
-# is the app's front door AND its own relay, so hosting the page here means ӾChat's own censorship-
+# is the app's front door AND its own relay, so hosting the page here means Punte's own censorship-
 # resistant infra serves its download — no third party (app store, artifact host, Pages) can pull it.
 # Loaded once at startup; a minimal inline fallback keeps the front door serving if the file is missing.
 try:
     with open(os.path.join(HERE, 'download.html'), encoding='utf-8') as _f:
         DOWNLOAD_PAGE = _f.read()
 except Exception:
-    DOWNLOAD_PAGE = ('<!doctype html><meta charset=utf-8><title>ӾChat</title>'
+    DOWNLOAD_PAGE = ('<!doctype html><meta charset=utf-8><title>Punte</title>'
                      '<body style="background:#050607;color:#eef3f7;font-family:sans-serif;text-align:center;padding:14vh 6vw">'
-                     '<h1>ӾChat</h1><p>A censorship-free X on the Nano ledger.</p>'
+                     '<h1>Punte</h1><p>A censorship-free X on the Nano ledger.</p>'
                      '<p><a style="color:#2ca6e0" href="https://github.com/stefanbx/xchat-alpha/raw/master/apk/xchat-alpha.apk">Download the Android APK</a></p>'
                      '<p><a style="color:#2ca6e0" href="https://github.com/stefanbx/xchat-alpha">Source &amp; checksums</a></p></body>')
 DOWNLOAD_PATHS = ('/', '/download', '/get', '/app')
 
 # The one-command relay installer, served next to the download page so the short, memorable
-# `curl -fsSL <node>/relay.sh | sh` on the landing page resolves to ӾChat's own infra rather than a
+# `curl -fsSL <node>/relay.sh | sh` on the landing page resolves to Punte's own infra rather than a
 # code-hosting account someone can suspend. Served as text/plain ON PURPOSE: piping a script into a
 # shell is only defensible if the same URL renders as readable source in a browser first.
 RELAY_INSTALLER = ''
@@ -61,7 +61,7 @@ RELAY_INSTALL_PATHS = ('/relay.sh', '/install-relay.sh')
 
 # The Flutter web build of the app, served from this node at /chat. Same origin as /api/*, which is
 # the point: the browser talks to the node that handed it the page — no CORS, no third-party host,
-# and a laptop can use ӾChat with no APK at all. Staged by deploy.sh from app/build/web; absent in a
+# and a laptop can use Punte with no APK at all. Staged by deploy.sh from app/build/web; absent in a
 # plain checkout (it's a build artifact), in which case /chat simply says so.
 WEB_APP_DIR = ''
 for _p in (os.path.join(HERE, 'web'), os.path.join(HERE, '..', 'app', 'build', 'web')):
@@ -1067,9 +1067,9 @@ class H(BaseHTTPRequestHandler):
             return self._send_html(DOWNLOAD_PAGE)
         if self.command in ('GET', 'HEAD') and (u.path == '/chat' or u.path.startswith('/chat/')):
             if not WEB_APP_DIR:
-                return self._send_html('<!doctype html><meta charset=utf-8><title>ӾChat</title>'
+                return self._send_html('<!doctype html><meta charset=utf-8><title>Punte</title>'
                                        '<body style="background:#050607;color:#eef3f7;font-family:sans-serif;'
-                                       'text-align:center;padding:14vh 6vw"><h1>ӾChat for the browser</h1>'
+                                       'text-align:center;padding:14vh 6vw"><h1>Punte for the browser</h1>'
                                        '<p>This node is running without the web build staged.</p>'
                                        '<p><a style="color:#2ca6e0" href="/">Get the Android app instead</a></p></body>')
             f = web_app_file(u.path)
@@ -1210,5 +1210,5 @@ class H(BaseHTTPRequestHandler):
 
 if __name__ == '__main__':
     srv = ThreadingHTTPServer(('0.0.0.0', PORT), H)
-    print(f'ӾChat backend (python) on http://0.0.0.0:{PORT}  helpers={HERE}  XC_NS={NS}')
+    print(f'Punte backend (python) on http://0.0.0.0:{PORT}  helpers={HERE}  XC_NS={NS}')
     srv.serve_forever()

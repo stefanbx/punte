@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Publish a Keel CONTENT PAGE as a Knot kind:'page' event (Level A of docs/KEEL-CONTENT-PAGES.md:
+# Publish an Octad CONTENT PAGE as a Punte kind:'page' event (Level A of docs/OCTAD-CONTENT-PAGES.md:
 # content-address the rendered zero-JS HTML + a signed page event). The phone never runs keel — this
 # tool does the publish, off-device.
 #
@@ -19,7 +19,7 @@ _spec = importlib.util.spec_from_file_location("xc_common", os.path.join(HERE, "
 xc = importlib.util.module_from_spec(_spec); _spec.loader.exec_module(xc)
 
 # The zero-JS invariant, enforced at publish time too (the app re-checks on render): a "page" that
-# carries a <script>, a javascript: URL, or an inline on*= handler is NOT a Keel content page.
+# carries a <script>, a javascript: URL, or an inline on*= handler is NOT an Octad content page.
 # Inline event handlers appear as ` onclick=` etc. — the \b keeps this from false-matching an
 # innocent attribute like `content=` (the "on" inside "c-ontent" is not at a word boundary).
 DANGER = re.compile(r'<script|javascript:|\bon\w+\s*=', re.I)
@@ -57,10 +57,10 @@ def pin_blob(cid, html_bytes):
 
 
 def main():
-    ap = argparse.ArgumentParser(description="Publish a Keel page as a Knot kind:'page' event (Level A).")
+    ap = argparse.ArgumentParser(description="Publish an Octad page as a Punte kind:'page' event (Level A).")
     ap.add_argument('--html', required=True, help='the rendered zero-JS HTML (from keel render_html)')
     ap.add_argument('--title', default='Page', help='feed-card + screen title')
-    ap.add_argument('--preview', default='A Keel content page.', help='plain-text preview (this is what is SIGNED)')
+    ap.add_argument('--preview', default='An Octad content page.', help='plain-text preview (this is what is SIGNED)')
     ap.add_argument('--handle', default='you.xno')
     ap.add_argument('--seedbyte', type=int, default=7, help='deterministic TEST publisher key (dry-run). '
                     'A real publish uses YOUR account key, which YOU supply — never pass your seed here in dry-run.')
@@ -83,7 +83,7 @@ def main():
     if not a.publish:
         print("\nDRY-RUN ok: the page event is valid and would be accepted by xc_post.py's ingest.")
         print("To go LIVE: run with --publish (pins the HTML blob), and post the event on YOUR account")
-        print("through the normal post pipeline (prepare -> sign head -> push) — see docs/KEEL-CONTENT-PAGES.md.")
+        print("through the normal post pipeline (prepare -> sign head -> push) — see docs/OCTAD-CONTENT-PAGES.md.")
         return
 
     n = pin_blob(cid, html)

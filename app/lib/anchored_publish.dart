@@ -29,7 +29,7 @@ import 'anchor.dart';
 import 'anchored_viewer.dart' show kAnchorContentHost, AnchoredViewerScreen;
 import 'main.dart' show kBg, kCard, kLine, kText, kDim, kAccent, gWallet;
 
-/// Starter content programs (valid Keel: import ui.kl + view/update). Offered so publishing needs no
+/// Starter content programs (valid Octad: import ui.kl + view/update). Offered so publishing needs no
 /// authoring from scratch; the user can edit freely before publishing.
 const Map<String, String> _kTemplates = {
   'counter': 'import "ui.kl"\n'

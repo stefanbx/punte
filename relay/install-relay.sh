@@ -1,5 +1,5 @@
 #!/bin/sh
-# ӾChat relay — one-command installer for people who don't live in a terminal.
+# Punte relay — one-command installer for people who don't live in a terminal.
 #
 #   curl -fsSL https://xchat-alpha-node.fly.dev/relay.sh | sh
 #
@@ -448,7 +448,7 @@ PYOP
             say "  Send it a tiny amount of XNO — any dust will do. The announce itself spends 4 raw"
             say "  (that is 0.000000000000000000000000004 XNO); the account just has to EXIST on-chain."
             say ""
-            say "  ${c_b}Easiest way: send it from your own ӾChat app wallet.${c_0} This is a DIFFERENT key from"
+            say "  ${c_b}Easiest way: send it from your own Punte app wallet.${c_0} This is a DIFFERENT key from"
             say "  the account you post and receive tips with — that is why funds you already hold do not"
             say "  count. In the app: tap your avatar (top left) → Send → paste the address above →"
             say "  0.001 XNO is plenty. A faucet works too."
@@ -617,8 +617,8 @@ CONF
         rm -f "$PLIST" "$UNIT"
         [ "$OS" != Darwin ] && systemctl --user daemon-reload 2>/dev/null || true
         rm -f "$HOME/.local/bin/xchat"                                  # the cli symlink
-        rm -rf "$HOME/Applications/ӾChat.app" "$HOME/Applications/ӾChat Relay Settings.app" \
-               "$HOME/Applications/ӾChat Relay Manual.app"
+        rm -rf "$HOME/Applications/Punte.app" "$HOME/Applications/Punte Relay Settings.app" \
+               "$HOME/Applications/Punte Relay Manual.app"
         rm -f "$HOME/.local/share/applications/xchat.desktop" \
               "$HOME/.local/share/applications/xchat-relay-settings.desktop" \
               "$HOME/.local/share/applications/xchat-relay-manual.desktop" \
@@ -708,7 +708,7 @@ fi
 # ---------------------------------------------------------------- preflight
 
 say ''
-say "${c_b}ӾChat relay${c_0} ${c_dim}— installing to $XC_HOME${c_0}"
+say "${c_b}Punte relay${c_0} ${c_dim}— installing to $XC_HOME${c_0}"
 say ''
 
 # Say out loud what the zero-flag default picked and how to override it — the choice changes the address
@@ -897,7 +897,7 @@ fi
 [ -n "$ACCT" ] && ok "payout address kept: $ACCT"
 if [ -z "$ACCT" ] && [ "${NOPROMPT:-0}" != 1 ] && { : < /dev/tty; } 2>/dev/null; then
     say ''
-    say "  Your relay can be paid (pinning fees, tip splits). Paste the ӾChat address you want"
+    say "  Your relay can be paid (pinning fees, tip splits). Paste the Punte address you want"
     say "  that money to land in — it's in the app under your profile. ${c_dim}Press Enter to skip.${c_0}"
     printf '  nano_… : '
     read -r ACCT < /dev/tty 2>/dev/null || ACCT=''
@@ -1498,7 +1498,7 @@ ADMIN_URL="http://127.0.0.1:$ADMIN_PORT"
 
 cat > "$XC_HOME/bin/xchat" <<EOF
 #!/bin/sh
-# The ӾChat relay control command. Written by install-relay.sh.
+# The Punte relay control command. Written by install-relay.sh.
 XC_HOME="$XC_HOME"
 SELF="$SELF"
 ADMIN_URL="$ADMIN_URL"
@@ -1560,9 +1560,9 @@ print("average:", d.get("avg_s"), "seconds a block")' 2>/dev/null || echo "work 
     restart)  sh "$SELF" --stop && sh "$SELF" --start ;;
     uninstall) sh "$SELF" --uninstall ;;
     *)
-        echo "ӾChat relay"
+        echo "Punte relay"
         echo "  xchat status     is it running, and on what address"
-        echo "  xchat app        open ӾChat in your browser"
+        echo "  xchat app        open Punte in your browser"
         echo "  xchat settings   open the settings page for your relay"
         echo "  xchat manual     open the handbook: how the mesh works + every command"
         echo "  xchat earnings   what your relay has been paid"
@@ -1634,10 +1634,10 @@ if [ "$OS" = Darwin ]; then
 PLIST
     }
     mkdir -p "$HOME/Applications"
-    make_app "ӾChat" "$APP_URL" "$HOME/Applications"
-    make_app "ӾChat Relay Settings" "$ADMIN_URL" "$HOME/Applications"
-    make_app "ӾChat Relay Manual" "file://$XC_HOME/manual.html" "$HOME/Applications"
-    ok "shortcuts added to your Applications folder (search Spotlight for 'ӾChat')"
+    make_app "Punte" "$APP_URL" "$HOME/Applications"
+    make_app "Punte Relay Settings" "$ADMIN_URL" "$HOME/Applications"
+    make_app "Punte Relay Manual" "file://$XC_HOME/manual.html" "$HOME/Applications"
+    ok "shortcuts added to your Applications folder (search Spotlight for 'Punte')"
 else
     APPS="$HOME/.local/share/applications"
     mkdir -p "$APPS"
@@ -1654,9 +1654,9 @@ DESK
         chmod +x "$APPS/$3.desktop"
         [ -d "$HOME/Desktop" ] && cp "$APPS/$3.desktop" "$HOME/Desktop/" 2>/dev/null || true
     }
-    make_desktop "ӾChat" "$APP_URL" "xchat"
-    make_desktop "ӾChat Relay Settings" "$ADMIN_URL" "xchat-relay-settings"
-    make_desktop "ӾChat Relay Manual" "file://$XC_HOME/manual.html" "xchat-relay-manual"
+    make_desktop "Punte" "$APP_URL" "xchat"
+    make_desktop "Punte Relay Settings" "$ADMIN_URL" "xchat-relay-settings"
+    make_desktop "Punte Relay Manual" "file://$XC_HOME/manual.html" "xchat-relay-manual"
     command -v update-desktop-database >/dev/null 2>&1 && update-desktop-database "$APPS" 2>/dev/null || true
     ok "shortcuts added to your applications menu"
 fi
@@ -1687,7 +1687,7 @@ else
         mkdir -p "$(dirname "$UNIT")"
         cat > "$UNIT" <<EOF
 [Unit]
-Description=ӾChat relay
+Description=Punte relay
 After=network-online.target
 
 [Service]
@@ -1782,15 +1782,15 @@ say "${c_dim}Open that in your browser to set your payout address, storage cap a
 say "${c_dim}what your relay has been paid. Only this computer can reach it — it isn't on the internet.${c_0}"
 say ''
 say "${c_b}In your browser${c_0}"
-say "  ӾChat app      $APP_URL"
+say "  Punte app      $APP_URL"
 say "  Relay settings $ADMIN_URL"
-say "${c_dim}  Both are also shortcuts you can click — search for 'ӾChat'.${c_0}"
+say "${c_dim}  Both are also shortcuts you can click — search for 'Punte'.${c_0}"
 say ''
 say "${c_b}In a terminal${c_0} ${c_dim}(type 'xchat' for the full list)${c_0}"
 say "${c_dim}  xchat status     is it running, and where${c_0}"
 say "${c_dim}  xchat earnings   what it has been paid${c_0}"
 say "${c_dim}  xchat storage    how much disk it is using${c_0}"
-say "${c_dim}  xchat app        open ӾChat${c_0}"
+say "${c_dim}  xchat app        open Punte${c_0}"
 say "${c_dim}  xchat settings   open the settings page${c_0}"
 say "${c_dim}  xchat stop | start | restart | logs | uninstall${c_0}"
 say ''

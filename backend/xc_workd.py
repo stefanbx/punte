@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# ӾChat WORK SERVER — proof-of-work for Nano blocks, GPU-first.
+# Punte WORK SERVER — proof-of-work for Nano blocks, GPU-first.
 #
 #   python3 xc_workd.py [port]           # default 7500
 #   GET /work?hash=<32-byte root hex>[&difficulty=<16 hex>]  ->  {"work": "..."}
@@ -155,5 +155,5 @@ class H(BaseHTTPRequestHandler):
 
 if __name__ == '__main__':
     src = f'GPU ({os.path.basename(GPU_BIN)})' if GPU_BIN else 'CPU only — build relay/work/nano_work_cl for GPU'
-    print(f'ӾChat work server on http://{BIND}:{PORT}  source: {src}', flush=True)
+    print(f'Punte work server on http://{BIND}:{PORT}  source: {src}', flush=True)
     ThreadingHTTPServer((BIND, PORT), H).serve_forever()

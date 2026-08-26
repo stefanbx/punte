@@ -1,6 +1,6 @@
-# Sovereign Mail — a modern encrypted email service on Knot
+# Sovereign Mail — a modern encrypted email service on Punte
 
-Status: design / roadmap (v0.1, 2026-08-25). Turns Knot's sealed DMs into an email-grade service:
+Status: design / roadmap (v0.1, 2026-08-25). Turns Punte's sealed DMs into an email-grade service:
 **end-to-end encrypted in transit and at rest, with the relay as a TRANSIENT store that clears once
 delivery is confirmed, and the CLIENT as the permanent, user-only encrypted archive.**
 

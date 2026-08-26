@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""apk_content_hash.py — the reproducibility trust anchor for ӾChat.
+"""apk_content_hash.py — the reproducibility trust anchor for Punte.
 
 A signed APK is not byte-reproducible by a third party: the APK Signing Block
 (v2/v3) and the v1 META-INF/*.SF|*.RSA files depend on the PRIVATE signing key,

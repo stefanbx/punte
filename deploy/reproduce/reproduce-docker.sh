@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Portable, cross-machine reproduction of the ӾChat APK content hash.
+# Portable, cross-machine reproduction of the Punte APK content hash.
 # Unlike reproduce.sh (builds on YOUR host, so the hash is only stable per-path),
 # this builds inside a pinned container at a canonical path — so any host OS gets
 # the SAME content hash. This is the recipe a release's published hash comes from.

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# ӾChat encrypted DIRECT MESSAGES — end-to-end, keyed to the Nano identity.
+# Punte encrypted DIRECT MESSAGES — end-to-end, keyed to the Nano identity.
 #
 # ON-DEVICE: all X25519 crypto_box sealing/opening happens IN THE APP (pinenacl, byte-compatible with
 # PyNaCl). This node helper holds NO seed and does NO decryption — it only:

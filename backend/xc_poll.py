@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# ӾChat POLLS — one signed vote per account, tallied off-chain (like likes/comments). The poll
+# Punte POLLS — one signed vote per account, tallied off-chain (like likes/comments). The poll
 # itself rides in the post (kind=poll, poll.options), head-signed. A vote is a signed event
 # {poll_id, account, option, ts, sig, pub}; the client verifies sig + key↔account and tallies.
 # Usage: xc_poll.py vote   (reads /tmp/xc_poll_{id,option}.txt)

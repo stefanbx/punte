@@ -1,6 +1,6 @@
 // Punte — a censorship-free X. The "Ӿ" is the XNO (Nano) symbol.
 // Identity = a Nano keypair. Feed = read from the ledger. Tips = feeless Nano.
-// Backend = the Keel engine (same censorship-free stack as KeelTube).
+// Backend = the Octad engine (same censorship-free stack as KeelTube).
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
@@ -4615,7 +4615,7 @@ class _FeedScreenState extends State<FeedScreen> with WidgetsBindingObserver {
 
   void _openThread(Post p) {
     if (p.kind == 'article') { _openArticle(p); return; }   // long-form → full-screen reader
-    if (p.kind == 'page') { _openKnotPage(p); return; }      // Keel content page → zero-JS WebView
+    if (p.kind == 'page') { _openPuntePage(p); return; }      // Octad content page → zero-JS WebView
     final root = _threadRoot(p);
     final chain = _threadChain(root);
     Navigator.of(context).push(MaterialPageRoute(builder: (_) => Scaffold(
@@ -4720,10 +4720,10 @@ class _FeedScreenState extends State<FeedScreen> with WidgetsBindingObserver {
     )));
   }
 
-  // A Keel content page → the locked-down, zero-JS WebView render. The blob (rendered HTML) lives at
+  // An Octad content page → the locked-down, zero-JS WebView render. The blob (rendered HTML) lives at
   // p.media, exactly like a photo/article stores its cid there.
-  void _openKnotPage(Post p) {
-    Navigator.push(context, MaterialPageRoute(builder: (_) => KnotPageView(
+  void _openPuntePage(Post p) {
+    Navigator.push(context, MaterialPageRoute(builder: (_) => PuntePageView(
         htmlCid: p.media ?? '',
         title: (p.title == null || p.title!.isEmpty) ? 'Page' : p.title!)));
   }
@@ -11060,19 +11060,19 @@ class _GamePlayerState extends State<GamePlayer> {
   }
 }
 
-// A Keel content page: a verified, ZERO-JavaScript HTML blob rendered in a locked-down WebView.
+// An Octad content page: a verified, ZERO-JavaScript HTML blob rendered in a locked-down WebView.
 // Mirrors GamePlayer's fetch/loading/error shape, but inverted for safety — JS is DISABLED, a CSP
 // meta forbids script + network, a belt-and-braces gate refuses any blob carrying script, and every
 // navigation the page attempts is intercepted natively (the WebView never loads a URL of its own).
-class KnotPageView extends StatefulWidget {
+class PuntePageView extends StatefulWidget {
   final String htmlCid;   // cid of the rendered zero-JS HTML blob (stored in Post.media)
   final String title;
-  const KnotPageView({super.key, required this.htmlCid, required this.title});
+  const PuntePageView({super.key, required this.htmlCid, required this.title});
   @override
-  State<KnotPageView> createState() => _KnotPageViewState();
+  State<PuntePageView> createState() => _PuntePageViewState();
 }
 
-class _KnotPageViewState extends State<KnotPageView> {
+class _PuntePageViewState extends State<PuntePageView> {
   WebViewController? _c;
   bool _loading = true;
   String? _err;
@@ -11532,7 +11532,7 @@ class _PostCardState extends State<PostCard> {
                 child: Text(p.title!,
                     style: const TextStyle(color: kText, fontWeight: FontWeight.w700, fontSize: 16, height: 1.3)),
               ),
-            // A Keel content page renders as a rich card (icon/chip + title + plain-text preview);
+            // An Octad content page renders as a rich card (icon/chip + title + plain-text preview);
             // tapping opens the full zero-JS WebView render. The card never loads the page, so the
             // feed stays cheap to scroll — same principle as the article card.
             if (p.kind == 'page')

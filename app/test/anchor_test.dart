@@ -2,7 +2,7 @@
 //
 // These tests HIT THE NETWORK (xchat-relay-1.fly.dev / xchat-alpha-node.fly.dev). They prove the Dart
 // resolver reproduces anchor.py/gateway.py byte-for-byte: two already-published names resolve to their
-// expected anchors + cids + Keel content, a TAMPERED blob is rejected on the sha256 check, and an
+// expected anchors + cids + Octad content, a TAMPERED blob is rejected on the sha256 check, and an
 // unknown name errors instead of returning anything. Tagged 'live' so they can be skipped offline:
 //   flutter test test/anchor_test.dart            (runs them)
 //   flutter test --exclude-tags live              (skips them)
@@ -24,15 +24,15 @@ const _greeterCid =
 
 void main() {
   group('resolveAnchor (live relays)', () {
-    test('counter resolves to its anchor, cid and Keel content', () async {
+    test('counter resolves to its anchor, cid and Octad content', () async {
       final r = await resolveAnchor('counter');
       expect(r.anchor, _counterAnchor);
       expect(r.contentCid, _counterCid);
       expect(r.currentKey.length, 64); // an operational pubkey (hex)
-      expect(r.contentText, contains('fn view')); // the Keel program body
+      expect(r.contentText, contains('fn view')); // the Octad program body
     }, tags: 'live', timeout: const Timeout(Duration(seconds: 60)));
 
-    test('greeter resolves to its anchor, cid and Keel content', () async {
+    test('greeter resolves to its anchor, cid and Octad content', () async {
       final r = await resolveAnchor('greeter');
       expect(r.anchor, _greeterAnchor);
       expect(r.contentCid, _greeterCid);

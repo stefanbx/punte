@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# reproduce.sh — rebuild the ӾChat Android APK and print its content-identity hash,
+# reproduce.sh — rebuild the Punte Android APK and print its content-identity hash,
 # so anyone can confirm the published app is exactly this source.
 #
 # Trust model (see WHITEPAPER §7): a signed APK can't be byte-reproduced without our

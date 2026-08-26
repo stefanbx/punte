@@ -1,8 +1,8 @@
-# Knot — a sovereign, censorship-free social network, discovered on the XNO ledger
+# Punte — a sovereign, censorship-free social network, discovered on the XNO ledger
 
 **Beta whitepaper · v0.4 · app v2.5.9**
 
-Knot is a decentralized, censorship-resistant social app for phones with no company, no server account, and
+Punte is a decentralized, censorship-resistant social app for phones with no company, no server account, and
 no removable point of control. Your identity is a cryptographic keypair, your posts are
 signed events replicated across interchangeable relays, and the app finds those relays by
 **scanning the Nano (XNO) ledger** — so there is no hardcoded server and no directory anyone
@@ -18,7 +18,7 @@ verify the claims** — especially that the network is discovered from the publi
 A social network is censorship-resistant only if **every** load-bearing component can be
 routed around: identity, content, discovery, moderation, funding, and even app distribution.
 A single fixed server, a single directory, or an app-store gate is enough to defeat the whole
-thing. Knot removes each of these single points of failure in turn.
+thing. Punte removes each of these single points of failure in turn.
 
 The organizing principle throughout: **the ledger is for settlement, never for transport or
 storage.** A billion posts cost zero ledger growth. Nano is touched only to (a) *settle a tip*
@@ -149,7 +149,7 @@ requires anyone's permission.
 On-chain discovery presumes a relay can be *dialed*. A relay on a home machine or a laptop cannot: it
 is behind NAT — able to dial **out**, never **in**. The usual fix (Cloudflare, `localhost.run`,
 Tailscale) reintroduces exactly what the rest of this design removes: an external service that is both
-a single point of failure and a point of control. Knot's answer is a **self-hosted reverse mesh** with
+a single point of failure and a point of control. Punte's answer is a **self-hosted reverse mesh** with
 no external dependency.
 
 Any node with a public IP can volunteer as an **entry node** — a capability advertised on the ledger
@@ -535,7 +535,7 @@ derived, signed, replicated, and swappable.
 ```
 
 **Two clients, one codebase.** The same Flutter app runs on Android and in a browser, served by any
-node at `/chat` — so a laptop can use Knot with no APK and no app store. The browser build signs with
+node at `/chat` — so a laptop can use Punte with no APK and no app store. The browser build signs with
 the identical scheme but a different implementation of it: the Android signer uses a TweetNaCl port
 whose field arithmetic is 64-bit, and JavaScript has no 64-bit integers, so the web build uses a
 BigInt implementation of ed25519-blake2b checked byte-for-byte against the Android one and against the
@@ -662,5 +662,5 @@ run a node, run a relay, announce it on-chain, and verify discovery yourself.
 
 ---
 
-*Knot is free software released for research and experimentation. It moves no money on your
+*Punte is free software released for research and experimentation. It moves no money on your
 behalf; you control your keys and your funds.*

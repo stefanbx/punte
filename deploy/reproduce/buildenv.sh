@@ -1,4 +1,4 @@
-# Sourced by reproduce.sh — the pinned build environment for ӾChat's Android APK.
+# Sourced by reproduce.sh — the pinned build environment for Punte's Android APK.
 # Edit these only when intentionally moving the pinned toolchain (and update TOOLCHAIN.md).
 export FLUTTER_HOME="${FLUTTER_HOME:-$HOME/flutter}"
 export JAVA_HOME="${JAVA_HOME:-/opt/homebrew/opt/openjdk@17/libexec/openjdk.jdk/Contents/Home}"

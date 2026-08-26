@@ -1,6 +1,6 @@
 # Reproducible builds
 
-ӾChat's self-update flow doesn't ask you to trust a publisher — it asks you to trust
+Punte's self-update flow doesn't ask you to trust a publisher — it asks you to trust
 **the open source code**. This directory lets anyone rebuild the Android APK from source
 and confirm the app they're running is exactly what's in this repo, with no privileged
 access and without our signing key.

@@ -100,5 +100,5 @@ sleep 1
 # when no key is set. Backgrounded + non-fatal so it never delays or blocks serving.
 ( sleep 25; python3 /app/xc_reldir.py ensure "$NODE_PUBLIC_URL" 2>&1 | sed 's/^/[self-announce] /' || true ) &
 
-echo "starting ӾChat node on :8790 (relay :7401 public=$NODE_PUBLIC_URL peer=$PEER_RELAY store=$STORE_DIR/relay.json ipfs=$IPFS_PATH, RPC=$XC_NANO_RPC)"
+echo "starting Punte node on :8790 (relay :7401 public=$NODE_PUBLIC_URL peer=$PEER_RELAY store=$STORE_DIR/relay.json ipfs=$IPFS_PATH, RPC=$XC_NANO_RPC)"
 exec python3 /app/kt_server.py 8790

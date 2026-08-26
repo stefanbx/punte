@@ -9,7 +9,7 @@
 #
 # It ALSO stamps the in-app announcement banner, for the same reason. That banner is a separate
 # publisher-signed record, and because nothing tied it to a release it went stale exactly the way the
-# page used to: it advertised "ӾChat 2.3.9 is live — tap to update" through three releases while the
+# page used to: it advertised "Punte 2.3.9 is live — tap to update" through three releases while the
 # update check correctly offered 2.4.3. One release, one place that decides what version we claim.
 #
 #   ./deploy/stamp-release.sh              # rewrite backend/download.html + sign announcement.json

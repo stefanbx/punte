@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>ӾChat Relay — Operator Handbook</title>
+<title>Punte Relay — Operator Handbook</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -179,7 +179,7 @@
     <span class="eyebrow" style="color:var(--muted)">Mesh Network</span><span class="dot"></span>
     <span class="eyebrow" style="color:var(--muted)">Branch: mesh-public-discovery</span>
   </div>
-  <h1>How the ӾChat mesh works today</h1>
+  <h1>How the Punte mesh works today</h1>
   <p class="lede" style="margin-top:1.2rem; max-width:64ch">
     A field map of the live network — <strong>who is reachable, how they are found, and how the mesh
     heals itself</strong> — and a straight answer to one question: can a git-delivered relay boot up as a
@@ -392,7 +392,7 @@
   </div>
   <div class="col">
     <p>A relay on a laptop can dial out but nothing can dial in. The usual fix is Cloudflare, localhost.run, or
-    Tailscale — an external service and a single point of failure. ӾChat's alternative uses <em>other ӾChat
+    Tailscale — an external service and a single point of failure. Punte's alternative uses <em>other Punte
     hubs</em> as entries. The node opens <strong>outbound long-poll connections to several hubs at once</strong>
     and serves itself through all of them. Kill any one hub and the others carry it.</p>
     <p>The transport is nothing but HTTP: a hanging <code>GET /_tunnel/poll</code> waits for work, a
@@ -752,7 +752,7 @@
       <tbody>
         <tr><td class="mono">xchat status</td><td>Is it running, and on what public address.</td></tr>
         <tr><td class="mono">xchat url</td><td>Prints the relay's current public address.</td></tr>
-        <tr><td class="mono">xchat app</td><td>Opens the ӾChat app in your browser.</td></tr>
+        <tr><td class="mono">xchat app</td><td>Opens the Punte app in your browser.</td></tr>
         <tr><td class="mono">xchat settings</td><td>Opens the settings page — payout wallet, storage cap, peers.</td></tr>
         <tr><td class="mono">xchat manual</td><td>Opens this handbook.</td></tr>
         <tr><td class="mono">xchat earnings</td><td>Payout account, balance in XNO, and payments received.</td></tr>
@@ -790,14 +790,14 @@
     <span class="lbl teal">Two web surfaces, both local</span>
     <p><b>Settings page</b> — <code>http://127.0.0.1:7402</code>, this machine only: set your payout wallet
     (with on-chain proof-of-control), storage cap and peers, and see what you've been paid. <b>Node
-    <code>/api</code></b> — <code>:8790</code>, what the ӾChat app talks to. Both start automatically at login and
+    <code>/api</code></b> — <code>:8790</code>, what the Punte app talks to. Both start automatically at login and
     are kept alive by a 5-second heartbeat; a public hub also binds its port to the internet.</p>
   </div>
 </section>
 
 <hr class="rule">
 <footer>
-  ӾChat relay — operator handbook &amp; mesh report · updated 2026-08-20<br>
+  Punte relay — operator handbook &amp; mesh report · updated 2026-08-20<br>
   Primary sources: relay/xc_relayd.py · relay/xc_tunnel.py · relay/install-relay.sh · relay/xc_admin.py · deploy/entrypoint.sh · app/lib/mesh.dart<br>
   Reopen any time with <code>xchat manual</code>. Diagrams depict the live mechanism as shipped.
 </footer>

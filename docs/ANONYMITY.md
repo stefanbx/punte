@@ -1,4 +1,4 @@
-# Anonymity: what a Knot account actually reveals
+# Anonymity: what a Punte account actually reveals
 
 A companion to [PRIVACY-AND-DECENTRALIZATION.md](PRIVACY-AND-DECENTRALIZATION.md). That one is about
 what the network can see. This one is about the harder question: **can a specific account be tied to a
@@ -12,7 +12,7 @@ where it stands below.
 
 ## The thing to say first
 
-**The strongest link between a Knot account and a real person is not in this app. It is on the Nano
+**The strongest link between a Punte account and a real person is not in this app. It is on the Nano
 ledger.**
 
 Identity here is a Nano account. That same account signs your posts, receives your tips and holds
@@ -39,7 +39,7 @@ social graph.
 | a curious stranger | *(was: everyone's whole DM graph)* — closed, mailbox reads now need a signature | nothing |
 | a relay operator | who talks to whom, when, how often, message sizes | that ciphertext arrived for someone |
 | the node your client uses | all of the above, plus your IP, plus continuous presence | IP and presence only |
-| a passive network observer | that you use Knot, and traffic timing | same |
+| a passive network observer | that you use Punte, and traffic timing | same |
 | anyone at all, via the ledger | balances, tips, funding sources, account clusters | **unchanged — this is the hard one** |
 
 ---

@@ -12,7 +12,7 @@ Real, active, good. TypeScript, Capacitor + Tauri, iOS/Android/desktop, 15 local
 
 Two facts decide how we may use it:
 
-**It is GPL-3.0. We are MIT.** Copying their code — any of it — makes Knot GPL-3.0 permanently. That
+**It is GPL-3.0. We are MIT.** Copying their code — any of it — makes Punte GPL-3.0 permanently. That
 is not a formality; it changes what everyone downstream may do with this project. So: read it,
 understand it, reimplement. Ideas are not copyrightable, expression is. **Do not paste.**
 
@@ -28,7 +28,7 @@ server** — not to admire the gap and call it principled.
 
 ## Why ours feels like a mailbox
 
-| | NanChat | Knot today |
+| | NanChat | Punte today |
 |---|---|---|
 | new message arrives | server pushes over a socket, sub-second | client polls: 5 s in a thread, 12 s for the badge |
 | cost of being idle | one open socket | a request every 5–12 s, forever, per client |

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# ӾChat relay ADMIN — the operator's settings + status page.
+# Punte relay ADMIN — the operator's settings + status page.
 #
 #   xc_admin.py <admin_port> <relay_url> <config.json> [xc_home]
 #
@@ -213,7 +213,7 @@ def restart_relay():
 
 
 PAGE = """<!doctype html><html lang=en><head><meta charset=utf-8>
-<meta name=viewport content="width=device-width, initial-scale=1"><title>ӾChat relay — settings</title>
+<meta name=viewport content="width=device-width, initial-scale=1"><title>Punte relay — settings</title>
 <style>
 :root{--bg:#050607;--card:#0f1317;--line:#1c2228;--ink:#eef3f7;--muted:#93a1ad;--accent:#2ca6e0;
       --accent2:#4fd1c5;--good:#38c172;--bad:#e0685a}
@@ -248,7 +248,7 @@ a{color:var(--accent)}
 label.check{display:flex;align-items:flex-start;gap:9px;margin:16px 0 0;color:var(--ink);font-size:13.5px}
 label.check input{width:auto;margin:2px 0 0}
 </style></head><body><div class=wrap>
-<h1>Your ӾChat relay</h1>
+<h1>Your Punte relay</h1>
 <p class=sub>Only you can see this page — it listens on this computer alone and is not part of what
    your relay serves to the internet. &nbsp;<a href="/manual">Open the handbook &rarr;</a></p>
 <div class=card><h2>Status</h2><div id=status>loading…</div></div>
@@ -257,7 +257,7 @@ label.check input{width:auto;margin:2px 0 0}
 <div class=card><h2>Settings</h2>
   <label for=acct>Payout address — where pinning fees and your 10% share of tips are sent</label>
   <input id=acct class=mono placeholder="nano_… (leave empty to accept no payments)">
-  <p class=hint>Paste your own address from the ӾChat app. Leave it empty and your relay simply
+  <p class=hint>Paste your own address from the Punte app. Leave it empty and your relay simply
      won't take paid pins — it will never quietly pay someone else.</p>
   <label for=cap>Storage cap (MB)</label>
   <input id=cap inputmode=numeric placeholder="512">
@@ -451,5 +451,5 @@ class A(BaseHTTPRequestHandler):
 
 
 if __name__ == '__main__':
-    print(f'ӾChat relay admin on http://{BIND}:{PORT}  relay={RELAY}  config={CONFIG}', flush=True)
+    print(f'Punte relay admin on http://{BIND}:{PORT}  relay={RELAY}  config={CONFIG}', flush=True)
     ThreadingHTTPServer((BIND, PORT), A).serve_forever()

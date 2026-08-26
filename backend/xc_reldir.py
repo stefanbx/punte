@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# SPOF-free relay discovery for ӾChat.
+# SPOF-free relay discovery for Punte.
 #
 # There is no directory owner. Each relay is self-sovereign: it owns its own XNO account, commits its
 # URL on ITS OWN chain (signed by itself — the account IS the pubkey), and checks in by sending 1-raw

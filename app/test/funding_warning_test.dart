@@ -1,7 +1,7 @@
 // The funding-privacy warning: the single highest-value anonymity feature, because it prevents the
 // mistake that undoes pseudonymity rather than mitigating it after the fact.
 //
-// An ӾChat identity is a Nano account, and the ledger is public and permanent. The one action that
+// A Punte identity is a Nano account, and the ledger is public and permanent. The one action that
 // ties that account to a real name is FUNDING it from a KYC exchange. So the app says so, twice, at
 // the two moments it matters: once at wallet creation (setting the model before any funds arrive) and
 // again on the receive sheet every time an address is shown (the actual funding decision point). See

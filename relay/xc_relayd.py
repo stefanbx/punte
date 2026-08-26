@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# A ӾChat RELAY. Holds signed author HEADS ({author, handle, seq, cid, expires, sig, pub}),
+# A Punte RELAY. Holds signed author HEADS ({author, handle, seq, cid, expires, sig, pub}),
 # gossips relay membership (bootstrap + /relays), and expires stale heads (TTL). Independent
 # and swappable — run several; clients DISCOVER the set from a bootstrap, no hardcoding.
 # Usage: xc_relayd.py <port> <store.json> [bootstrap_url ...]

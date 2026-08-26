@@ -102,7 +102,7 @@ to every relay via `backfill()`). A Nano account can receive while its relay ser
 temporarily‑down relay still collects its share and serves once back.
 
 **Expiry → notice → grace → reclaim (the lifecycle).**
-- Within `RENEW_WINDOW` of `period_end`, relays send the owner a **renewal notice** — a Knot message,
+- Within `RENEW_WINDOW` of `period_end`, relays send the owner a **renewal notice** — a Punte message,
   surfaced by the browser's mail agent (see Unified client below).
 - At `period_end`, a `GRACE` period starts: the name still resolves but is flagged *expiring*, with more
   notices.
@@ -142,7 +142,7 @@ verifies the payments itself, so a lying relay is caught. No CA, no central root
 **Build order for this model:** (1) relay: paid‑lease verification (`paid_until`, cite+verify payment
 blocks, reject a later claim over an active sub) reusing the pay‑to‑pin machinery; (2) client: verify the
 payment + show `paid_until`/owner fingerprint, plus the P0 TOFU pin as the belt‑and‑braces user protection;
-(3) renewal notices over Knot messages; (4) expiry/grace/reclaim state machine; (5) split‑payment settlement
+(3) renewal notices over Punte messages; (4) expiry/grace/reclaim state machine; (5) split‑payment settlement
 across relay accounts. Keep P0 (TOFU + fingerprint) regardless — it protects users during the transition and
 against any relay that misreports the ledger.
 
@@ -151,10 +151,10 @@ against any relay that misreports the ledger.
 Direction (2026‑08‑25): the app is not just a browser. It is one sovereign client with three faces over a
 single identity key:
 - **Browser** — resolve, verify, and render sovereign pages (done).
-- **Mail agent** — the user's messages, built on Knot's existing signed DMs. System notices (renewal
+- **Mail agent** — the user's messages, built on Punte's existing signed DMs. System notices (renewal
   reminders, expiry warnings, "your name is contested") arrive here. This is also how the registrar reaches
   a name's owner.
-- **IDE / publisher** — author Keel pages, publish under a name, share files, and serve services from the
+- **IDE / publisher** — author Octad pages, publish under a name, share files, and serve services from the
   local node (done: Publish panel + `xc_node.py`).
 
 One identity signs pages, receives mail, and owns names — so "email me to renew" and "verify who owns this
@@ -180,6 +180,6 @@ Ownership model is now decided (P3 = paid‑subscription registrar). Recommended
 2. **Registrar core** — relay paid‑lease verification (`paid_until`, cite+verify on‑chain payments, reject a
    later claim over an active subscription) reusing the pay‑to‑pin machinery; client verifies the payment
    and shows `paid_until` + owner fingerprint.
-3. **Lifecycle** — renewal notices over Knot mail, then expiry/grace/reclaim.
+3. **Lifecycle** — renewal notices over Punte mail, then expiry/grace/reclaim.
 4. **Split‑payment settlement** across relay accounts.
 5. **P1/P2 polish** — key‑bearing links, petnames, confusable + label policy.

@@ -9,7 +9,7 @@
 //      every link ON-DEVICE (lease sig, KERI chain, content sha256). Throws AnchorError on ANY failure, so
 //      we NEVER render bytes we could not prove. The result carries {anchor, currentKey, contentCid,
 //      contentBytes, seq}.
-//   2. POST the verified contentBytes (raw Keel source) to the hosted content runtime `$host/load` → the
+//   2. POST the verified contentBytes (raw Octad source) to the hosted content runtime `$host/load` → the
 //      runtime returns {"session":"<id>","url":"/s/<id>"}.
 //   3. Load `$host$url` in a WebView. The runtime renders zero-JS interactive HTML whose buttons are plain
 //      links (/s/<id>?e=N) back into the same host — so taps navigate within the host with no interception.
@@ -26,7 +26,7 @@ import 'package:webview_flutter/webview_flutter.dart';
 import 'anchor.dart';
 import 'main.dart' show kBg, kCard, kLine, kText, kDim, kAccent;
 
-/// The hosted Keel content runtime (B2): fetches the client-VERIFIED bytes, runs them sandboxed and
+/// The hosted Octad content runtime (B2): fetches the client-VERIFIED bytes, runs them sandboxed and
 /// renders zero-JS. Deployed as an isolated Fly app over HTTPS. For local host development, point this
 /// at 'http://10.0.2.2:8799' (the host machine's localhost from the Android emulator).
 const String kAnchorContentHost = 'https://xchat-content-host.fly.dev';
@@ -111,7 +111,7 @@ class _AnchoredViewerScreenState extends State<AnchoredViewerScreen> {
     }
   }
 
-  /// POST the raw verified Keel source to `$host/load`; returns the runtime session url (e.g. `/s/<id>`).
+  /// POST the raw verified Octad source to `$host/load`; returns the runtime session url (e.g. `/s/<id>`).
   Future<String> _loadIntoRuntime(List<int> contentBytes) async {
     final r = await http
         .post(Uri.parse('$kAnchorContentHost/load'), body: contentBytes)

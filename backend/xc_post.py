@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# ӾChat write path — OFF-CHAIN, via mutable heads on plural relays. Zero Nano blocks.
+# Punte write path — OFF-CHAIN, via mutable heads on plural relays. Zero Nano blocks.
 #
 # ON-DEVICE SIGNING (prepare/submit): the APP signs the post event AND the head. The node never
 # holds the seed. Because a head can only be signed over a content CID that doesn't exist until the

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Shared helpers for the ӾChat per-user-thread backend (dev Nano network + IPFS).
+# Shared helpers for the Punte per-user-thread backend (dev Nano network + IPFS).
 import json, subprocess, urllib.request, urllib.parse, urllib.error, base64, hashlib, os, time, ipaddress, shutil, socket, threading
 import http.client
 from concurrent.futures import ThreadPoolExecutor

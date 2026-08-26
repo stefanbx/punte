@@ -1,6 +1,6 @@
 name: reproducible-build
 
-# Produces the CANONICAL content-identity hash of the ӾChat APK on a native linux/amd64
+# Produces the CANONICAL content-identity hash of the Punte APK on a native linux/amd64
 # runner (the reproducible-builds.org / F-Droid convention). This is the number a release
 # publishes and that anyone can match by running deploy/reproduce/reproduce-docker.sh.
 #
@@ -40,7 +40,7 @@ jobs:
           CH=$(grep -m1 '^content_hash:' repro.log | awk '{print $2}')
           echo "content_hash=$CH" >> "$GITHUB_OUTPUT"
           {
-            echo "## ӾChat reproducible build"
+            echo "## Punte reproducible build"
             echo ""
             echo "Built on \`linux/amd64\` at the canonical path \`/build/xchat\`."
             echo ""
