@@ -79,6 +79,13 @@ update without an app release. Refresh them with the release so they're current 
 - [ ] ```bash
       cd app && flutter build web --release --base-href /chat/ && cd ..
       ```
+- [ ] **If it fails with `Couldn't resolve the package 'xchat'`:** the web `.dart_tool`
+      build cache is stale from before the `xchat → punte` package rename (Android builds
+      regenerate cleanly; only the web cache holds a generated entrypoint importing
+      `package:xchat/main.dart`). Fix with a clean rebuild — no code change needed:
+      ```bash
+      cd app && flutter clean && flutter pub get && flutter build web --release --base-href /chat/ && cd ..
+      ```
 
 ## Phase 5 — Deploy the node (`xchat-alpha-node`)
 - [ ] ```bash
