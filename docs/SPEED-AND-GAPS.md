@@ -1,4 +1,4 @@
-# Speed, and the gaps to X
+# Speed, and the gaps to mainstream social apps
 
 Measured 2026-08-16 on the emulator and the live fly node. Numbers first, because the obvious
 suspicions were wrong: startup is already fast, and the feed is already cached.
@@ -43,15 +43,15 @@ what the node burns to produce it.
 
 ---
 
-## Gaps to X
+## Gaps to mainstream social apps
 
 Checked by inspection rather than memory. Present already: polls, bookmarks, repost/quote, mute,
 block, video, pull-to-refresh, translate, views, follows, profiles, long-form channels, and DMs that
-are now ahead of X's in some respects (E2E, reactions, receipts, search).
+are now ahead of mainstream social apps in some respects (E2E, reactions, receipts, search).
 
 Missing, in the order they are worth having:
 
-1. **@mentions** — no autocomplete, and a mention is not a link. This is how conversation works on X;
+1. **@mentions** — no autocomplete, and a mention is not a link. This is how conversation works on mainstream social apps;
    without it there is no way to pull someone into a thread.
 2. **Hashtags** — not parsed, not tappable, not searchable. The other half of discovery.
 3. **Link previews** — a URL is bare text. Cheap to add, and it is most of what a timeline looks like.

@@ -1,4 +1,4 @@
-// Punte — a censorship-free X. The "Ӿ" is the XNO (Nano) symbol.
+// Punte — a censorship-free social network. The "Ӿ" is the XNO (Nano) symbol.
 // Identity = a Nano keypair. Feed = read from the ledger. Tips = feeless Nano.
 // Backend = the Octad engine (same censorship-free stack as KeelTube).
 import 'dart:async';
@@ -424,8 +424,7 @@ class MutedWordsStore {
       (await SharedPreferences.getInstance()).setStringList(_k, w);
 }
 
-// private, on-device bookmarks — a list of saved post ids. Client-side only (like X bookmarks,
-// which are private); nothing is published, so your reading list stays yours.
+// private, on-device bookmarks — a list of saved post ids. Client-side only (private); nothing is published, so your reading list stays yours.
 class BookmarkStore {
   static const _k = 'xchat_bookmarks';
   static Future<Set<String>> get() async =>
@@ -999,7 +998,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
         Text('Punte',
             style: TextStyle(color: kText, fontWeight: FontWeight.w800, fontSize: 28)),
         SizedBox(height: 6),
-        Text('a censorship-free X. your account is a Nano keypair — no email, no server.',
+        Text('a censorship-free social network. your account is a Nano keypair — no email, no server.',
             textAlign: TextAlign.center,
             style: TextStyle(color: kDim, fontSize: 13, height: 1.4)),
       ]);
@@ -2881,7 +2880,7 @@ class Api {
 
 }
 
-// compact counts, X-style: 942 · 1.2K · 3.4M
+// compact counts: 942 · 1.2K · 3.4M
 String _compact(int n) {
   if (n < 1000) return '$n';
   if (n < 1000000) { final k = n / 1000; return '${k < 10 ? k.toStringAsFixed(1) : k.round()}K'; }
@@ -4507,7 +4506,7 @@ class _FeedScreenState extends State<FeedScreen> with WidgetsBindingObserver {
         myReaction: _myReactions[post.id] ?? '',
         onReport: () => _reportPost(post),
         onComment: () => _openComments(post),
-        onReply: () => _compose(replyToPost: post),                 // X-style reply → new post w/ reply_to
+        onReply: () => _compose(replyToPost: post),                 // reply → new post w/ reply_to
         // count the WHOLE thread below this post (transitive), incl. buffered new posts — a reply chain
         // shows its true size, not just direct children (which read as "1" on a multi-deep thread).
         replyCount: _threadReplyCount(post.id),
@@ -5601,7 +5600,7 @@ class _FeedScreenState extends State<FeedScreen> with WidgetsBindingObserver {
     );
   }
 
-  // Pin one of your own posts to the top of your profile (X-style). Re-publishes your profile with a
+  // Pin one of your own posts to the top of your profile. Re-publishes your profile with a
   // separately-signed pinned marker.
   Future<void> _pinToProfile(Post p) async {
     final ok = await Api.setPinned(p.id);
@@ -5697,7 +5696,7 @@ class _FeedScreenState extends State<FeedScreen> with WidgetsBindingObserver {
       final id = await Api.post(segs[i], handle: postHandle, signer: signer,
           media: i == 0 ? mediaCid : '', medias: i == 0 ? medias : const [],
           mediaKind: i == 0 ? mediaKind : '',
-          // first segment threads under the post being replied to (X-style reply); later segments chain
+          // first segment threads under the post being replied to (reply); later segments chain
           // to the previous segment so a multi-part reply stays a self-thread under that first reply.
           quote: i == 0 ? (job['quote'] as String? ?? '') : '',
           replyTo: i == 0 ? (job['reply_to'] as String? ?? '') : prev,
@@ -7545,7 +7544,7 @@ class _FeedScreenState extends State<FeedScreen> with WidgetsBindingObserver {
       'segments': res.segments,
       'title': res.title,
       'quote': res.quote,
-      'reply_to': replyToPost?.id ?? '',   // X-style reply: this post threads under replyToPost
+      'reply_to': replyToPost?.id ?? '',   // reply: this post threads under replyToPost
       'mediaKind': res.mediaBytes != null ? res.mediaKind : '',
       'mediaB64': res.mediaBytes != null ? base64Encode(res.mediaBytes!) : '',
       'photosB64': res.photos.map((b) => base64Encode(b)).toList(),   // 1..4 → a multi-image post
@@ -8169,7 +8168,7 @@ class _FeedScreenState extends State<FeedScreen> with WidgetsBindingObserver {
       if (_announcement != null) _AnnouncementMarquee(text: _announcement!),
       if (_needsBackup) _backupBanner(),
       if (_update != null) _updateBanner(),
-      // For You / Following segmented header (X-style), with a transparency ⓘ
+      // For You / Following segmented header, with a transparency ⓘ
       Container(
         decoration: const BoxDecoration(border: Border(bottom: BorderSide(color: kLine))),
         child: Row(children: [
@@ -8185,7 +8184,7 @@ class _FeedScreenState extends State<FeedScreen> with WidgetsBindingObserver {
         ]),
       ),
       Expanded(
-        // the timeline, with a floating "N new posts" pill overlaid at the top (X-style). New posts
+        // the timeline, with a floating "N new posts" pill overlaid at the top. New posts
         // are held in _newPosts and only merged in when the reader taps the pill — so the scroll
         // position never jumps under them.
         child: Stack(children: [
@@ -8212,7 +8211,7 @@ class _FeedScreenState extends State<FeedScreen> with WidgetsBindingObserver {
                 }
                 // stable identity per post so a feed refresh matches elements by post, not by slot —
                 // without this the list recycles cards across posts and their media gets mismatched.
-                // clean single card per post; tap it to open the full conversation (X-style thread view).
+                // clean single card per post; tap it to open the full conversation (thread view).
                 return KeyedSubtree(key: ValueKey(posts[j].id), child: _profileCard(posts[j]));
               },
             ),
@@ -10054,7 +10053,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
     final followers = (src['followers'] ?? 0) as int;
     final pinnedId = '${src['pinned'] ?? ''}';
     final mine = widget.allPosts.where((p) => p.account == widget.account).toList();
-    // The pinned post floats to the top of the Posts tab (X-style). Only a post that is actually theirs
+    // The pinned post floats to the top of the Posts tab. Only a post that is actually theirs
     // can pin — a forged id that matches nothing just doesn't show.
     if (pinnedId.isNotEmpty) {
       final idx = mine.indexWhere((p) => p.id == pinnedId);
@@ -10554,10 +10553,10 @@ class PostCard extends StatefulWidget {
   final bool muted, blocked, bookmarked;
   final Post? quoted; // resolved quoted post (for a quote-post), rendered inline
   final bool inThread; // part of an author thread → show a thread affordance
-  final int replyCount;       // number of reply-posts to this post (X-style reply counter on the bubble)
+  final int replyCount;       // number of reply-posts to this post (reply counter on the bubble)
   final String replyingToHandle; // if this post is itself a reply, the handle it replies to ('' if none/unknown)
   final bool expanded;        // start with full post text shown (the focused post at the top of a thread)
-  final String repostedBy; // handle of the resharer who spread this to you (X-style header)
+  final String repostedBy; // handle of the resharer who spread this to you (header)
   const PostCard(
       {super.key,
       required this.post,
@@ -11499,7 +11498,7 @@ class _PostCardState extends State<PostCard> {
               ),
             ]),
             const SizedBox(height: 3),
-            // X-style reply context: "Replying to @handle" when this post threads under another
+            // reply context: "Replying to @handle" when this post threads under another
             if (p.replyTo != null)
               Padding(
                 padding: const EdgeInsets.only(bottom: 3),
@@ -11569,7 +11568,7 @@ class _PostCardState extends State<PostCard> {
                   ),
                 ),
               ),
-            // tap the post body → open the full conversation (the entire post + all replies), X-style.
+            // tap the post body → open the full conversation (the entire post + all replies).
             // A page has no inline body — its card above is the whole affordance — so skip this.
             if (p.kind != 'page') GestureDetector(
               behavior: HitTestBehavior.opaque,
@@ -11765,7 +11764,7 @@ class _PostCardState extends State<PostCard> {
       builder: (_) => SafeArea(
         child: SingleChildScrollView(
           child: Column(mainAxisSize: MainAxisSize.min, children: [
-          // Comments live on as a lightweight "quiet reply" tier alongside the X-style reply-posts —
+          // Comments live on as a lightweight "quiet reply" tier alongside the reply-posts —
           // reachable here from the overflow so the primary bubble stays the reply action.
           ListTile(
             leading: const Icon(Icons.mode_comment_outlined, color: kText),
@@ -12658,7 +12657,7 @@ class _MediaImageState extends State<MediaImage> {
 }
 
 // An in-feed video: streams from the relay, shows the FIRST FRAME as a poster, and autoplays MUTED
-// and looping (X-style) as soon as it's on screen. Tap opens the full-screen player WITH sound. The
+// and looping as soon as it's on screen. Tap opens the full-screen player WITH sound. The
 // controller is disposed when the card is recycled off-screen, so a video far from view stops on its own.
 class _MoviePreview extends StatefulWidget {
   final Post post;
@@ -12698,7 +12697,7 @@ class _MoviePreviewState extends State<_MoviePreview> {
       }
       final c = VideoPlayerController.file(f)
         ..setLooping(true)
-        ..setVolume(0); // muted autoplay, X-style
+        ..setVolume(0); // muted autoplay
       await c.initialize();
       if (!mounted) {
         c.dispose();
@@ -12991,7 +12990,7 @@ class PhotoScreen extends StatelessWidget {
   }
 }
 
-/// The 1–4 image layout under a post, X-style: one fills the width, two split it, three are a big-left +
+/// The 1–4 image layout under a post: one fills the width, two split it, three are a big-left +
 /// two-stacked-right, four are a 2×2. Tapping any tile opens the full-screen swipeable [GalleryScreen] at
 /// that image. Corners are rounded once, on the whole grid.
 class _PhotoGrid extends StatelessWidget {
@@ -13403,7 +13402,7 @@ class _Actions extends StatelessWidget {
         _act(liked ? Icons.thumb_up : Icons.thumb_up_outlined, likes > 0 ? '$likes' : '',
             liked ? kAccent : kDim, onLike,
             '${_say(likes, 'like', 'likes', 'Like')}${liked ? ', liked by you' : ''}'),
-        // views (impressions) — non-interactive, like X's view counter
+        // views (impressions) — non-interactive (a plain view/impression counter)
         _act(Icons.bar_chart, views > 0 ? _compact(views) : '', kDim, null,
             _say(views, 'view', 'views', 'No views yet')),
         // XNO this post has gathered
@@ -13879,7 +13878,7 @@ class ComposeResult {
 class ComposeSheet extends StatefulWidget {
   final String handle, account;
   final Post? quotedPost; // when set, this is a quote-post embedding that post
-  final Post? replyToPost; // when set, this post is an X-style reply threaded under that post
+  final Post? replyToPost; // when set, this post is a reply threaded under that post
   final List<String> channels; // the author's channels — an article can be published under one
   final Map<String, String> people; // account -> handle, for @-mention autocomplete (feed-seen accounts)
   final String initialText; // pre-seed the first body field (e.g. a game challenge callout)
@@ -13908,7 +13907,7 @@ class _ComposeSheetState extends State<ComposeSheet> {
 
   bool _compressing = false;
 
-  // @-mention autocomplete (X-style): while you type "@part" in a body field, suggest matching handles;
+  // @-mention autocomplete: while you type "@part" in a body field, suggest matching handles;
   // picking one inserts "@handle ". The mention renders as a tappable @handle in the feed (onTapHandle).
   TextEditingController? _mentionCtl;      // the body field the mention is being typed in
   int _mentionStart = -1;                  // index of the '@' that opened the token

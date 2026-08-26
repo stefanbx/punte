@@ -39,7 +39,7 @@ try:
 except Exception:
     DOWNLOAD_PAGE = ('<!doctype html><meta charset=utf-8><title>Punte</title>'
                      '<body style="background:#050607;color:#eef3f7;font-family:sans-serif;text-align:center;padding:14vh 6vw">'
-                     '<h1>Punte</h1><p>A censorship-free X on the Nano ledger.</p>'
+                     '<h1>Punte</h1><p>A censorship-free social network on the Nano ledger.</p>'
                      '<p><a style="color:#2ca6e0" href="https://github.com/stefanbx/punte/raw/master/apk/xchat-alpha.apk">Download the Android APK</a></p>'
                      '<p><a style="color:#2ca6e0" href="https://github.com/stefanbx/punte">Source &amp; checksums</a></p></body>')
 DOWNLOAD_PATHS = ('/', '/download', '/get', '/app')

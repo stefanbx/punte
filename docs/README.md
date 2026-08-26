@@ -9,7 +9,7 @@ in order — not a wish list. Where something is unmeasured or unverified they s
 | [PRIVACY-AND-DECENTRALIZATION.md](PRIVACY-AND-DECENTRALIZATION.md) | what the network can see, and how central it really is |
 | [ANONYMITY.md](ANONYMITY.md) | whether an account can be tied to a person — threat model first |
 | [PUSH-AND-PRODUCTION.md](PUSH-AND-PRODUCTION.md) | push delivery, and what is worth taking from NanChat (and what may not be copied) |
-| [SPEED-AND-GAPS.md](SPEED-AND-GAPS.md) | measured performance and the remaining gaps to X |
+| [SPEED-AND-GAPS.md](SPEED-AND-GAPS.md) | measured performance and the remaining gaps to mainstream social apps |
 | [DM-PLAN.md](DM-PLAN.md) | the direct-message work |
 | [TESTING-WIRE-CHANGES.md](TESTING-WIRE-CHANGES.md) | how to test a format/protocol change before it reaches the live network |
 | [SCALING.md](SCALING.md) | relay and storage growth |
