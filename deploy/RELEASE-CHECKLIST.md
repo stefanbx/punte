@@ -62,6 +62,18 @@ That file must be the NEW build before you publish the record.
       (override with `XC_RELEASE_URL` if needed).
 - [ ] Verify: `python3 backend/xc_release.py check` → newest signed release = your version.
 
+## Phase 3b — Publish the games directory (same key; relay-delivered, NOT in the APK)
+Games are self-contained HTML pinned to the relays as content-addressed blobs, named by a
+publisher-signed directory (`xc_gamespub.py`) — deliberately **not** baked into the APK, so they
+update without an app release. Refresh them with the release so they're current + authored "Punte".
+- [ ] Preview (no key): `cd backend && python3 xc_gamespub.py --check && cd ..`
+- [ ] Publish:
+      ```bash
+      cd backend && python3 xc_gamespub.py && cd ..   # pins blobs + signs + pushes /gamesdir to every relay
+      ```
+- [ ] Verify live: `curl -s https://xchat-alpha-node.fly.dev/api/games | python3 -m json.tool | grep -E '"title"|"author"'`
+      → 3 games (Ӿnake / Ӿ Stack / Ӿ Catch), author "Punte".
+
 ## Phase 4 — Build the web app (/chat)
 `deploy.sh` refuses to ship a stale `/chat`.
 - [ ] ```bash
