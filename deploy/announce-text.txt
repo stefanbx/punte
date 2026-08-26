@@ -1,1 +1,1 @@
-Punte 2.5.11 is live — fixes the QR-address scanner (black camera on 2.5.10) so Send → Scan works. Tap to update.
+Punte 2.5.12 is live — we're now Punte, with a new name and icon (same app, same account, same keys), plus a Send → Scan camera fix. Tap to update.

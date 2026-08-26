@@ -13,12 +13,10 @@ repeatable release flow. Derived from the actual scripts (`deploy/deploy.sh`,
   `xchat-relay-1`, all `*.fly.dev` hosts, and every wire/storage identity. Deleting the
   GitHub repo later does **not** touch Fly.
 
-## Decision before you start
-- [ ] **Version.** `app/pubspec.yaml` is `2.5.11+22511` and `deploy/announce-text.txt` says
-      "Punte 2.5.11…". Decide whether the Punte reveal (name + bridge icon) ships **as 2.5.11**
-      or bumps to **2.5.12**. If you bump, update BOTH `pubspec.yaml` (`version:` + `+CODE`)
-      and `deploy/announce-text.txt` (must literally contain the version, or
-      `sign-announcement.py` aborts).
+## Version (decided)
+This release is **2.5.12** — the Punte reveal (new name + bridge icon) plus the Send → Scan
+camera fix. Already set: `app/pubspec.yaml` (`2.5.12+22512`), `app/lib/main.dart`
+(`kAppVersion = '2.5.12'`), and `deploy/announce-text.txt` (names 2.5.12).
 
 ## Prerequisites
 - [ ] `fly auth whoami` → butucea.stefan@gmail.com ✅ (already authed)
@@ -55,7 +53,7 @@ That file must be the NEW build before you publish the record.
 ## Phase 3 — Sign + publish the release record (root of trust for self-update)
 - [ ] ```bash
       echo "$PWD/apk/xchat-alpha.apk" > /tmp/xc_rel_apk.txt
-      echo "2.5.11"                    > /tmp/xc_rel_version.txt   # match your chosen version
+      echo "2.5.12"                    > /tmp/xc_rel_version.txt   # match your chosen version
       echo "Rebrand to Punte (new name + icon); QR-scanner fix" > /tmp/xc_rel_changelog.txt
       python3 backend/xc_release.py publish
       ```
@@ -86,13 +84,13 @@ That file must be the NEW build before you publish the record.
       ```
 
 ## Phase 7 — Verify live
-- [ ] Banner is current + Punte-named: `python3 deploy/sign-announcement.py 2.5.11 --check`
+- [ ] Banner is current + Punte-named: `python3 deploy/sign-announcement.py 2.5.12 --check`
 - [ ] Landing page rebranded: `curl -s https://xchat-alpha-node.fly.dev/ | grep -o '<title>[^<]*'`
       → `Punte`
 - [ ] APK mirror resolves on punte: `curl -sIL https://github.com/stefanbx/punte/raw/master/apk/xchat-alpha.apk | grep -E 'HTTP|location'`
 - [ ] Installer one-liner points at punte:
       `curl -s https://xchat-alpha-node.fly.dev/relay.sh | grep -c 'stefanbx/punte'` → ≥1
-- [ ] In the app: launch → the update sheet / banner shows **Punte 2.5.11**, and a fresh
+- [ ] In the app: launch → the update sheet / banner shows **Punte 2.5.12**, and a fresh
       install shows the bridge icon + "Punte".
 
 ## Phase 8 — After the 10-day retention: delete xchat-alpha (your call, destructive)
