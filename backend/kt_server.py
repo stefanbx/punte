@@ -853,8 +853,10 @@ def route(path, query, body):
     if path.startswith('/api/leaderboard'):  return json.dumps(xc_games.leaderboard(q('game')))
     if path.startswith('/api/games'):        return json.dumps(xc_games.directory())
     if path.startswith('/api/notify_push'):
+        # post_id (optional) names the post the notification is about, so the app can open it on tap
         return json.dumps(xc_engage.notify({'to': b('to'), 'from': b('from'), 'kind': b('kind'),
-                                            'text': b('text'), 'ts': int(time.time())}))
+                                            'text': b('text'), 'post_id': b('post_id'),
+                                            'ts': int(time.time())}))
     if path.startswith('/api/notify'):
         with ipc_lock('notify'):
             put('/tmp/xc_notify_acct.txt', q('account'))   # route by the viewer's unique account, not a shared handle

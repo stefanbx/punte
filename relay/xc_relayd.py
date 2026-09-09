@@ -2398,7 +2398,9 @@ class H(BaseHTTPRequestHandler):
                 if to in notifs or len(notifs) < NOTIF_ACCTS:            # cap distinct recipients
                     lst = notifs.setdefault(to, [])
                     lst.append({'from': m.get('from', ''), 'text': m.get('text', ''),
-                                'ts': m.get('ts', 0), 'kind': m.get('kind', 'mention')})
+                                'ts': m.get('ts', 0), 'kind': m.get('kind', 'mention'),
+                                # the post this is about; '' from an older client → not tappable
+                                'post_id': str(m.get('post_id', ''))[:128]})
                     del lst[:-NOTIF_MAX]                                 # keep only the most recent N
                 self._send(200, '{"ok":true}')
             except Exception as e:

@@ -492,22 +492,41 @@ class EngageStore {
 class Notifs {
   static final FlutterLocalNotificationsPlugin _p = FlutterLocalNotificationsPlugin();
   static bool _ready = false;
+  /// Set by the feed once it is on screen: open the post a tapped system notification is about.
+  /// Static because the tap callback is static; a null one (app still starting) simply parks the id
+  /// in [pendingPostId] for the feed to pick up when it registers.
+  static void Function(String postId)? onOpenPost;
+  static String pendingPostId = '';
+  static void _tapped(String? payload) {
+    final id = (payload ?? '').trim();
+    if (id.isEmpty) return;
+    final open = onOpenPost;
+    if (open == null) { pendingPostId = id; return; }
+    open(id);
+  }
   static Future<void> init() async {
     if (_ready) return;
     const init = InitializationSettings(android: AndroidInitializationSettings('@mipmap/ic_launcher'));
-    await _p.initialize(init);
+    await _p.initialize(init,
+        onDidReceiveNotificationResponse: (r) => _tapped(r.payload));
+    // Tapping a notification while the app was KILLED launches it instead of calling the callback,
+    // so the launch details carry the payload — otherwise that tap silently loses the post.
+    try {
+      final launch = await _p.getNotificationAppLaunchDetails();
+      if (launch?.didNotificationLaunchApp ?? false) _tapped(launch?.notificationResponse?.payload);
+    } catch (_) {}
     // Android 13+ needs a runtime grant for POST_NOTIFICATIONS.
     await _p.resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>()
         ?.requestNotificationsPermission();
     _ready = true;
   }
-  static Future<void> show(int id, String title, String body) async {
+  static Future<void> show(int id, String title, String body, {String postId = ''}) async {
     await init();
     const details = NotificationDetails(
         android: AndroidNotificationDetails('xchat_activity', 'Activity',
             channelDescription: 'Likes, comments, tips and messages on your posts',
             importance: Importance.high, priority: Priority.high, icon: '@mipmap/ic_launcher'));
-    await _p.show(id, title, body, details);
+    await _p.show(id, title, body, details, payload: postId);
   }
   static Future<void> setBadge(int count) async {
     try {
@@ -1856,12 +1875,17 @@ class Api {
     } catch (_) {}
   }
 
-  // tell the content creator about a like / repost / tip / comment
-  static Future<void> notifyPush(String to, String from, String kind, String text) async {
+  // tell the content creator about a like / repost / tip / comment.
+  // postId names the post the notification is ABOUT, so tapping the notification can open it. It rides
+  // as an extra body field: a relay that predates it simply drops it and the notification still lands
+  // (it just won't be tappable), so this needs no coordinated deploy.
+  static Future<void> notifyPush(String to, String from, String kind, String text,
+      {String postId = ''}) async {
     try {
       await http.post(Uri.parse('$kBase/api/notify_push'),
           headers: {'Content-Type': 'application/json'},
-          body: jsonEncode({'to': to, 'from': from, 'kind': kind, 'text': text}));
+          body: jsonEncode({'to': to, 'from': from, 'kind': kind, 'text': text,
+                            if (postId.isNotEmpty) 'post_id': postId}));
     } catch (_) {}
   }
 
@@ -3465,6 +3489,13 @@ class _FeedScreenState extends State<FeedScreen> with WidgetsBindingObserver {
   void initState() {
     super.initState();
     Notifs.init();   // set up Android notifications + ask for the POST_NOTIFICATIONS grant (Android 13+)
+    // A tapped system notification opens the post it names, here and for the one that launched the app.
+    Notifs.onOpenPost = _openPostById;
+    if (Notifs.pendingPostId.isNotEmpty) {
+      final id = Notifs.pendingPostId;
+      Notifs.pendingPostId = '';
+      WidgetsBinding.instance.addPostFrameCallback((_) => _openPostById(id));
+    }
     _bootWallet();
     _load();
     _initDevice();
@@ -3556,6 +3587,7 @@ class _FeedScreenState extends State<FeedScreen> with WidgetsBindingObserver {
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    if (Notifs.onOpenPost == _openPostById) Notifs.onOpenPost = null;  // don't hold a dead State
     _dmBadgeTimer?.cancel();
     DmPush.stop();
     _batSub?.cancel();
@@ -4345,7 +4377,11 @@ class _FeedScreenState extends State<FeedScreen> with WidgetsBindingObserver {
             !_hasMutedWord(p) &&
             !_channelAccounts.contains(p.account) && // channels have their own tab
             p.replyTo == null)
-        .toList();
+        .toList()
+      // Following is a chronological feed, so say so in the code rather than inheriting whatever
+      // order _posts happens to be in (page appends put older posts at the end, but nothing
+      // guarantees a page is itself sorted).
+      ..sort((a, b) => b.ts.compareTo(a.ts));
   }
 
   // ---- "For You": a TRANSPARENT, tunable ranking (unlike a black-box algorithm) ----
@@ -4386,7 +4422,15 @@ class _FeedScreenState extends State<FeedScreen> with WidgetsBindingObserver {
             !_hasMutedWord(p) &&
             !_channelAccounts.contains(p.account)) // channels live in the Channels tab, not the feed
         .toList();
-    list.sort((a, b) => _score(b).compareTo(_score(a)));
+    // "Latest" is a promise the reader can verify at a glance: newest first, strictly by time.
+    // The blended _score — even at freshness 2 — lets a tipped or liked OLDER post sit above a
+    // brand-new one, because recency 1/(1+age) saturates within a few hours while engagement
+    // still carries weight (tips ×20). So Latest sorts by timestamp; only Popular/Balanced rank.
+    if (_settings.forYouFreshness >= 2) {
+      list.sort((a, b) => b.ts.compareTo(a.ts));
+    } else {
+      list.sort((a, b) => _score(b).compareTo(_score(a)));
+    }
     return list;
   }
 
@@ -4415,7 +4459,7 @@ class _FeedScreenState extends State<FeedScreen> with WidgetsBindingObserver {
     EngageStore.saveLiked(_liked); // persist so this device's like counts once (no re-like each session)
     if (!liked && p.account != _account && _settings.notifyLike) {
       Api.notifyPush(p.account, _handle, 'like',
-          'liked: ${p.text.length > 40 ? '${p.text.substring(0, 40)}…' : p.text}');
+          'liked: ${p.text.length > 40 ? '${p.text.substring(0, 40)}…' : p.text}', postId: p.id);
     }
   }
 
@@ -4454,7 +4498,7 @@ class _FeedScreenState extends State<FeedScreen> with WidgetsBindingObserver {
     });
     EngageStore.saveReactions(_myReactions);
     if (cur != emoji && p.account != _account && _settings.notifyLike) {
-      Api.notifyPush(p.account, _handle, 'like', 'reacted $emoji to your post');
+      Api.notifyPush(p.account, _handle, 'like', 'reacted $emoji to your post', postId: p.id);
     }
   }
 
@@ -4467,7 +4511,7 @@ class _FeedScreenState extends State<FeedScreen> with WidgetsBindingObserver {
     Api.repost(p.id, rp ? -1 : 1, _account); // record WHO reshared (reward attribution)
     EngageStore.saveReposted(_reposted); // persist so this device's repost counts once
     if (!rp && p.account != _account) {
-      Api.notifyPush(p.account, _handle, 'repost', 'reposted your post');
+      Api.notifyPush(p.account, _handle, 'repost', 'reposted your post', postId: p.id);
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
           backgroundColor: kCard,
           content: Text('🔁 reposted — spreads to your followers; you earn a cut of its future tips')));
@@ -4479,8 +4523,56 @@ class _FeedScreenState extends State<FeedScreen> with WidgetsBindingObserver {
     if (id.isNotEmpty && _viewed.add(id)) { Api.view(id); EngageStore.saveViewed(_viewed); }
   }
 
+  // A handle resolves to an account only here, where the feed's view of who is who lives.
+  void _openHandle(String h) {
+    final want = h.toLowerCase();
+    final hit = _knownHandles().entries
+        .where((e) => e.value.toLowerCase() == want)
+        .map((e) => e.key);
+    if (hit.isNotEmpty) {
+      _openProfile(hit.first, h);
+    } else {
+      // Unknown handle: fall back to search rather than doing nothing, since the person may
+      // simply not be in the posts we currently hold.
+      _openDiscover('@$h');
+    }
+  }
+
+  // Open a post by id. The feed may not hold it yet on a cold start (a tapped system notification can
+  // beat the first fetch), so retry briefly rather than dropping the tap on the floor.
+  Future<void> _openPostById(String id) async {
+    if (id.isEmpty) return;
+    for (var tries = 0; tries < 6; tries++) {   // ~3.5s — long enough for the first feed fetch
+      final p = _postById(id);
+      if (p != null) { if (mounted) _openThread(p); return; }
+      await Future.delayed(const Duration(milliseconds: 600));
+      if (!mounted) return;
+    }
+  }
+
+  // Tapping a notification opens what it is ABOUT. Notifications carry post_id, so a like/comment/
+  // reaction/repost lands on that post's view; a notification from an older client (or one with no
+  // post, like a settled tip) has no id, so fall back to whoever sent it. A tap never does nothing.
+  void _openNotif(Map<String, dynamic> n) {
+    final post = _postById('${n['post_id'] ?? ''}');
+    if (post != null) {
+      _openThread(post);
+      // A comment notification is about a COMMENT, and comments live in their own sheet — open it over
+      // the post so the text you were told about is what you land on, with the post behind it. (An
+      // article/page reader already lists its comments inline, so it needs no sheet.)
+      if ('${n['kind'] ?? ''}' == 'comment' && post.kind != 'article' && post.kind != 'page') {
+        WidgetsBinding.instance.addPostFrameCallback((_) { if (mounted) _openComments(post); });
+      }
+      return;
+    }
+    final from = '${n['from'] ?? ''}'.trim();
+    if (from.isNotEmpty) { _openHandle(from); return; }
+    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        backgroundColor: kCard, content: Text('nothing to open for this notification')));
+  }
+
   // build a fully-wired post card (reused by the profile screen's Posts/Media tabs)
-  Widget _profileCard(Post post, {bool expanded = false}) {
+  Widget _profileCard(Post post, {bool expanded = false, bool inPostView = false}) {
     _countView(post.id); // this card is being rendered → an impression
     final mod = _mod(post.id);
     if (mod.hide) {
@@ -4489,6 +4581,7 @@ class _FeedScreenState extends State<FeedScreen> with WidgetsBindingObserver {
     return PostCard(
         post: post,
         expanded: expanded,
+        inPostView: inPostView,
         softFlag: mod,
         pending: _pending[post.account] ?? 0,
         youTipped: _tipPending(post),
@@ -4516,19 +4609,7 @@ class _FeedScreenState extends State<FeedScreen> with WidgetsBindingObserver {
         // Accept a challenge: open the game seeded with the poster's score as the target to beat.
         onPlayChallenge: (game, score) => _playChallenge(game, score),
         // A handle resolves to an account only here, where the feed's view of who is who lives.
-        onTapHandle: (h) {
-          final want = h.toLowerCase();
-          final hit = _knownHandles().entries
-              .where((e) => e.value.toLowerCase() == want)
-              .map((e) => e.key);
-          if (hit.isNotEmpty) {
-            _openProfile(hit.first, h);
-          } else {
-            // Unknown handle: fall back to search rather than doing nothing, since the person may
-            // simply not be in the posts we currently hold.
-            _openDiscover('@$h');
-          }
-        },
+        onTapHandle: _openHandle,
         onTapTag: (t) => _openDiscover('#$t'),
         onOpenProfile: () => _openProfile(post.account, post.handle),
         muted: _muted.contains(post.account),
@@ -4625,7 +4706,7 @@ class _FeedScreenState extends State<FeedScreen> with WidgetsBindingObserver {
         itemCount: chain.length,
         separatorBuilder: (_, __) => Container(color: kLine, height: 1),
         // the focused (root) post shows its full text; replies keep the compact "Show more" behaviour
-        itemBuilder: (_, i) => _profileCard(chain[i], expanded: i == 0),
+        itemBuilder: (_, i) => _profileCard(chain[i], expanded: i == 0, inPostView: true),
       ),
     )));
   }
@@ -4712,7 +4793,7 @@ class _FeedScreenState extends State<FeedScreen> with WidgetsBindingObserver {
                   style: TextStyle(color: kDim, fontSize: 13.5)));
           }
           return Column(children: [
-            for (final r in replies) ...[Container(color: kLine, height: 1), _profileCard(r)],
+            for (final r in replies) ...[Container(color: kLine, height: 1), _profileCard(r, inPostView: true)],
           ]);
         }),
       ]),
@@ -5255,7 +5336,7 @@ class _FeedScreenState extends State<FeedScreen> with WidgetsBindingObserver {
         onTipComment: _tallyCommentTip,
         onCommented: () {
           if (p.account != _account && _settings.notifyComment) {
-            Api.notifyPush(p.account, _handle, 'comment', 'commented on your post');
+            Api.notifyPush(p.account, _handle, 'comment', 'commented on your post', postId: p.id);
           }
         },
       ),
@@ -5796,7 +5877,11 @@ class _FeedScreenState extends State<FeedScreen> with WidgetsBindingObserver {
     showModalBottomSheet(
       context: context,
       backgroundColor: kBg,
-      builder: (_) => Container(
+      // The list scrolls: it used to be a bare Column, so past a screenful the older notifications
+      // overflowed off the sheet and could not be reached — let alone tapped.
+      isScrollControlled: true,
+      constraints: BoxConstraints(maxHeight: MediaQuery.of(context).size.height * 0.8),
+      builder: (sheetCtx) => Container(
         padding: const EdgeInsets.all(16),
         decoration: const BoxDecoration(border: Border(top: BorderSide(color: kLine))),
         child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -5812,41 +5897,15 @@ class _FeedScreenState extends State<FeedScreen> with WidgetsBindingObserver {
           if (notifs.isEmpty)
             const Padding(padding: EdgeInsets.symmetric(vertical: 20), child: Text('nothing new', style: TextStyle(color: kDim)))
           else
-            ...notifs.map((n) {
-              // Name the action from the notification's kind — it used to always say "mentioned you",
-              // so a tip or a like was mislabelled (users reported "it says mentioned but it's a tip").
-              final k = '${n['kind'] ?? ''}';
-              final verb = k == 'tip' ? 'tipped your post'
-                  : k == 'like' ? 'liked your post'
-                  : k == 'comment' ? 'commented on your post'
-                  : k == 'follow' ? 'followed you'
-                  : 'mentioned you';
-              // The header now names the action, so drop a verb prefix the text baked in (no "liked … liked:").
-              var detail = '${n['text']}';
-              for (final p in const ['liked: ', 'commented: ', 'tipped your post ']) {
-                if (detail.startsWith(p)) { detail = detail.substring(p.length); break; }
-              }
-              final from = '${n['from']}';
-              final initial = from.isEmpty ? '?' : from.substring(0, 1).toUpperCase();  // never RangeError on empty
-              return Padding(
-                  padding: const EdgeInsets.only(bottom: 14),
-                  child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                    CircleAvatar(radius: 16, backgroundColor: avatarColor(from),
-                        child: Text(initial,
-                            style: const TextStyle(color: Colors.black, fontWeight: FontWeight.w800, fontSize: 13))),
-                    const SizedBox(width: 10),
-                    Expanded(
-                        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                      Text('@$from $verb · ${timeAgo(n['ts'] ?? 0)}',
-                          style: const TextStyle(color: kDim, fontSize: 12)),
-                      if (detail.isNotEmpty) ...[
-                        const SizedBox(height: 2),
-                        Text(detail, style: const TextStyle(color: kText, fontSize: 14, height: 1.3)),
-                      ],
-                    ])),
-                  ]),
-                );
-            }),
+            Flexible(
+              child: ListView(
+                shrinkWrap: true,
+                children: [
+                  for (final n in notifs)
+                    NotifTile(notif: n, onTap: () { Navigator.pop(sheetCtx); _openNotif(n); }),
+                ],
+              ),
+            ),
         ]),
       ),
     );
@@ -7417,7 +7476,8 @@ class _FeedScreenState extends State<FeedScreen> with WidgetsBindingObserver {
       // Treat it as the trigger it is; the 12s backstop then has nothing left to find.
       if (kind == 'tip') _autoReceive();
       final title = kind == 'tip' ? '◈ New tip' : kind == 'like' ? '❤ New like' : '💬 New comment';
-      Notifs.show('${n['from']}$ts'.hashCode & 0x7fffffff, title, '${n['text']}');
+      Notifs.show('${n['from']}$ts'.hashCode & 0x7fffffff, title, '${n['text']}',
+          postId: '${n['post_id'] ?? ''}');
     }
     if (maxTs > seen) await p.setInt('notif_seen_ts', maxTs);
   }
@@ -8306,7 +8366,8 @@ class _FeedScreenState extends State<FeedScreen> with WidgetsBindingObserver {
                   'score  =  engagement  +  recency  +  follow-boost\n\n'
                   'engagement = likes×1 + reposts×2 + comments×1.5 + tips×20\n'
                   'recency    = newer posts score higher\n'
-                  'follow-boost = +3 if you follow the author',
+                  'follow-boost = +3 if you follow the author\n\n'
+                  'Latest ignores the score entirely: newest first, by time.',
                   style: TextStyle(color: kText, fontFamily: 'monospace', fontSize: 12, height: 1.5)),
             ),
             const Padding(padding: EdgeInsets.only(top: 18, bottom: 8),
@@ -10556,6 +10617,10 @@ class PostCard extends StatefulWidget {
   final int replyCount;       // number of reply-posts to this post (reply counter on the bubble)
   final String replyingToHandle; // if this post is itself a reply, the handle it replies to ('' if none/unknown)
   final bool expanded;        // start with full post text shown (the focused post at the top of a thread)
+  /// The card is already INSIDE a post view (a thread, an article's comments), so a photo has nowhere
+  /// further to open — it goes straight to the zoomable gallery. In the feed it is false and the photo
+  /// opens the post first (see [_PhotoGrid.onTap]).
+  final bool inPostView;
   final String repostedBy; // handle of the resharer who spread this to you (header)
   const PostCard(
       {super.key,
@@ -10596,6 +10661,7 @@ class PostCard extends StatefulWidget {
       this.replyCount = 0,
       this.replyingToHandle = '',
       this.expanded = false,
+      this.inPostView = false,
       this.repostedBy = ''});
   static void _noop() {}
   static void _noopReact(String _) {}
@@ -11637,7 +11703,12 @@ class _PostCardState extends State<PostCard> {
             if (p.kind == 'photo' && p.gallery.isNotEmpty)
               Padding(
                 padding: const EdgeInsets.only(top: 10),
-                child: _PhotoGrid(cids: p.gallery, handle: p.handle),
+                child: _PhotoGrid(
+                    cids: p.gallery,
+                    handle: p.handle,
+                    // In the feed the photo opens the POST; once you are inside the post view it
+                    // opens the zoomable gallery, which is where the zoom belonged all along.
+                    onTap: (!widget.inPostView && widget.onOpenThread != null) ? widget.onOpenThread : null),
               ),
             if (p.kind == 'movie' && p.media != null) _MoviePreview(post: p),
             // poll
@@ -12960,6 +13031,64 @@ class _FollowListScreenState extends State<FollowListScreen> {
   }
 }
 
+/// One row of the notifications sheet.
+///
+/// The whole row is a tap target: a notification you cannot follow to what it is about is just a
+/// receipt. Where the tap goes is the caller's business (the feed is the only thing that can resolve
+/// a post id or a handle) — this widget only says WHAT happened and reports the tap.
+class NotifTile extends StatelessWidget {
+  const NotifTile({super.key, required this.notif, required this.onTap});
+  final Map<String, dynamic> notif;
+  final VoidCallback onTap;
+
+  /// Name the action from the notification's kind — it used to always say "mentioned you", so a tip
+  /// or a like was mislabelled (users reported "it says mentioned but it's a tip").
+  static String verbFor(String kind) => kind == 'tip' ? 'tipped your post'
+      : kind == 'like' ? 'liked your post'
+      : kind == 'comment' ? 'commented on your post'
+      : kind == 'repost' ? 'reposted your post'
+      : kind == 'follow' ? 'followed you'
+      : 'mentioned you';
+
+  /// The header names the action, so drop a verb prefix the text baked in (no "liked … liked:").
+  static String detailOf(String text) {
+    for (final p in const ['liked: ', 'commented: ', 'tipped your post ']) {
+      if (text.startsWith(p)) return text.substring(p.length);
+    }
+    return text;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final verb = verbFor('${notif['kind'] ?? ''}');
+    final detail = detailOf('${notif['text'] ?? ''}');
+    final from = '${notif['from'] ?? ''}';
+    final initial = from.isEmpty ? '?' : from.substring(0, 1).toUpperCase();  // never RangeError on empty
+    return InkWell(
+      onTap: onTap,
+      child: Padding(
+        padding: const EdgeInsets.only(bottom: 14),
+        child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          CircleAvatar(radius: 16, backgroundColor: avatarColor(from),
+              child: Text(initial,
+                  style: const TextStyle(color: Colors.black, fontWeight: FontWeight.w800, fontSize: 13))),
+          const SizedBox(width: 10),
+          Expanded(
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text('@$from $verb · ${timeAgo(notif['ts'] ?? 0)}',
+                style: const TextStyle(color: kDim, fontSize: 12)),
+            if (detail.isNotEmpty) ...[
+              const SizedBox(height: 2),
+              Text(detail, style: const TextStyle(color: kText, fontSize: 14, height: 1.3)),
+            ],
+          ])),
+          const Icon(Icons.chevron_right, size: 18, color: kDim),
+        ]),
+      ),
+    );
+  }
+}
+
 class PhotoScreen extends StatelessWidget {
   // Either a cid (public post media, fetched by MediaImage) or raw bytes (a DM attachment, which is
   // decrypted on-device and must never be re-fetched as plaintext by cid).
@@ -12993,13 +13122,23 @@ class PhotoScreen extends StatelessWidget {
 /// The 1–4 image layout under a post: one fills the width, two split it, three are a big-left +
 /// two-stacked-right, four are a 2×2. Tapping any tile opens the full-screen swipeable [GalleryScreen] at
 /// that image. Corners are rounded once, on the whole grid.
+///
+/// [onTap] overrides that: in the FEED a tile opens the post instead of the viewer. A photo-only post has
+/// no body text, so the photo was the whole card — tapping it zoomed and there was no way to reach the
+/// post's own view (its replies, the full-size caption, the thread it sits in). The zoom is not lost, it
+/// moves one step in: the post view passes no override, so there the photo opens the gallery as before.
 class _PhotoGrid extends StatelessWidget {
-  const _PhotoGrid({required this.cids, required this.handle});
+  const _PhotoGrid({required this.cids, required this.handle, this.onTap});
   final List<String> cids;
   final String handle;
+  final VoidCallback? onTap;
 
-  void _open(BuildContext c, int i) => Navigator.of(c).push(MaterialPageRoute(
-      builder: (_) => GalleryScreen(cids: cids, initial: i, label: 'Photo in a post by $handle')));
+  void _open(BuildContext c, int i) {
+    final over = onTap;
+    if (over != null) { over(); return; }
+    Navigator.of(c).push(MaterialPageRoute(
+        builder: (_) => GalleryScreen(cids: cids, initial: i, label: 'Photo in a post by $handle')));
+  }
 
   Widget _cell(BuildContext c, int i) => GestureDetector(
         onTap: () => _open(c, i),
@@ -13571,7 +13710,8 @@ class _CommentsSheetState extends State<CommentsSheet> {
     EngageStore.saveLikedComments(_likedC);
     final acct = (c['account'] ?? '') as String;
     if (!liked && acct.isNotEmpty && acct != widget.myAccount) {
-      Api.notifyPush(acct, widget.myHandle, 'like', 'liked your comment');
+      // the comment lives under this post — that's where the tap should land
+      Api.notifyPush(acct, widget.myHandle, 'like', 'liked your comment', postId: widget.post.id);
     }
   }
 
