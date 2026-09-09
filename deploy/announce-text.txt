@@ -1,1 +1,1 @@
-Punte 2.5.12 is live — we're now Punte, with a new name and icon (same app, same account, same keys), plus a Send → Scan camera fix. Tap to update.
+Punte 2.5.13 is live — tap a photo post to open it (the zoom moved inside), tap a notification to jump to the post it names, and Latest now means strictly newest-first. Tap to update.
