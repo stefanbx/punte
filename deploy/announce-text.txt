@@ -1,1 +1,1 @@
-Punte 2.5.14 is live — post to your channels from the composer (pick "Posting as"), and share videos up to 30 MB (about a minute and a half, compressed on your phone). Tap to update.
+Punte 2.5.15 is live — anyone can start a channel: tap "New channel" in the Channels tab, then Post from your channel's page. Your channels now follow you to a new phone. Tap to update.
