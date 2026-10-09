@@ -181,7 +181,7 @@ Future<void> resolveWorkBase() async {
 // seed. Set as soon as the seed is known (RootGate), used by the Api layer below.
 NanoWallet? gWallet;
 const String kGw = 'http://10.0.2.2:8080/ipfs/';
-const String kAppVersion = '2.5.13'; // this build; the update checker compares against the signed release.
+const String kAppVersion = '2.5.14'; // this build; the update checker compares against the signed release.
 // Supporter mode is HIDDEN until it does real work: a phone can't relay (NAT), so it just triggers the
 // node to gossip, and with only a couple of fully-synced relays there's nothing to backfill. Flip to true
 // once the relay set is large/laggy enough that a supporter's re-push actually fills a gap.

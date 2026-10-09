@@ -1,1 +1,1 @@
-Punte 2.5.13 is live — tap a photo post to open it (the zoom moved inside), tap a notification to jump to the post it names, and Latest now means strictly newest-first. Tap to update.
+Punte 2.5.14 is live — post to your channels from the composer (pick "Posting as"), and share videos up to 30 MB (about a minute and a half, compressed on your phone). Tap to update.
