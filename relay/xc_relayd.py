@@ -747,8 +747,11 @@ def reconcile_release_pins():
     # never comes, so it hoarded every build it ever synced (20+ old APKs, hundreds of MB). A superseded
     # self-update binary is dead weight: the app only ever updates to the NEWEST release, and the bytes
     # stay re-fetchable from IPFS/peers if ever needed. So actively DROP our copy when a release falls out
-    # of the window — unless placement makes us a responsible holder of that cid (then we keep it, and
-    # shard_repair would just pull it back anyway) or a user paid to pin it.
+    # of the window, unless a user paid to pin it. This used to spare a cid we were a "responsible"
+    # placement holder for, but with a tier no bigger than its replica count every relay is responsible
+    # for every cid, so nothing was ever dropped: on 2026-10-09 relay-1 held 21 superseded builds
+    # (~381 MB) next to ~10 MB of user content. Placement doesn't matter for a dead binary: every relay
+    # runs this same rule, so no peer keeps a copy for shard_repair to pull back.
     keep = _release_pin_cids()
     paid = set(pins_paid.values())
     for _pub, lst in list(releases.items()):
@@ -760,7 +763,7 @@ def reconcile_release_pins():
                 continue
             if pinned.get(c):
                 pinned.pop(c, None)          # release pin lifted
-            if c in blob_meta and not _responsible(c):
+            if c in blob_meta:
                 with _blob_lock:
                     if c in blob_meta:       # re-check under lock
                         _db.execute('DELETE FROM blob WHERE cid=?', (c,)); _db.commit()
