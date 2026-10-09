@@ -4950,7 +4950,9 @@ class _FeedScreenState extends State<FeedScreen> with WidgetsBindingObserver {
                   await Api.profileSet(name, descCtl.text.trim(), avatarCid, '', signer: ch, type: 'channel');
                   // surface the new channel's name/photo everywhere at once (don't wait for a relay round-trip)
                   ProfileCache.I.put(ch.account, {'display': name, 'bio': descCtl.text.trim(), 'avatar': avatarCid});
-                  setState(() => _myChannels.add(name));
+                  // also mark it a channel account now: _channelAccounts is otherwise only learned at startup,
+                  // so a channel made this session had its posts shown on Home until the app restarted
+                  setState(() { _myChannels.add(name); _channelAccounts = {..._channelAccounts, ch.account}; });
                   await _saveChannels();
                   _indexMyChannels();
                   if (!_follows.contains(ch.account)) { _follows.add(ch.account); _publishFollows(); }
@@ -7926,16 +7928,18 @@ class _FeedScreenState extends State<FeedScreen> with WidgetsBindingObserver {
     final segs = (job['segments'] as List).cast<String>();
     final hasMedia = (job['mediaB64'] as String? ?? '').isNotEmpty;
     final title = (job['title'] as String? ?? '');
+    final channel = (job['channel'] as String?) ?? '';
+    final who = channel.isNotEmpty ? channel : _handle;   // a queued channel post is the channel's, not yours
     return Container(
       color: warn.withOpacity(0.06),
       padding: const EdgeInsets.fromLTRB(16, 12, 12, 10),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Row(children: [
           CircleAvatar(radius: 20, backgroundColor: kAccent.withOpacity(0.3),
-              child: Text(_handle.isNotEmpty ? _handle[0].toUpperCase() : 'Y',
+              child: Text(who.isNotEmpty ? who[0].toUpperCase() : 'Y',
                   style: const TextStyle(fontWeight: FontWeight.bold))),
           const SizedBox(width: 10),
-          Flexible(child: Text(_handle, overflow: TextOverflow.ellipsis,
+          Flexible(child: Text(who, overflow: TextOverflow.ellipsis,
               style: const TextStyle(fontWeight: FontWeight.bold))),
           const SizedBox(width: 6),
           const Text('· queued', style: TextStyle(color: kDim, fontSize: 13)),
