@@ -17,7 +17,8 @@ try:
     for r in RELAYS:
         try:
             urllib.request.urlopen(urllib.request.Request(r + '/blob', json.dumps({'cid': cid, 'b64': b64}).encode(),
-                                   {'Content-Type': 'application/json'}), timeout=15).read()
+                                   {'Content-Type': 'application/json'}),
+                                   timeout=15 + len(data) // (1024 * 1024)).read()   # +1 s/MB: videos go up to 30 MB
             pinned += 1
         except Exception:
             pass

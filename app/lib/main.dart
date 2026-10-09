@@ -2810,7 +2810,9 @@ class Api {
     try {
       final r = await http.post(Uri.parse('$kBase/api/blob_put'),
           headers: {'Content-Type': 'application/json'},
-          body: jsonEncode({'b64': base64Encode(bytes)})).timeout(const Duration(seconds: 45));
+          // a 30 MB video is ~40 MB on the wire; give a slow mobile uplink time (~4 s per MB on top of 45 s)
+          body: jsonEncode({'b64': base64Encode(bytes)}))
+          .timeout(Duration(seconds: 45 + 4 * (bytes.length ~/ (1024 * 1024))));
       final cid = jsonDecode(r.body)['cid'] as String?;
       if (cid == null || cid.isEmpty) {
         final b = r.body;
@@ -4922,7 +4924,7 @@ class _FeedScreenState extends State<FeedScreen> with WidgetsBindingObserver {
                   if (!mounted) return;
                   Navigator.pop(ctx);
                   ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-                      backgroundColor: kCard, content: Text('channel created — publish articles under it')));
+                      backgroundColor: kCard, content: Text('channel created — pick it under “Posting as” when you post')));
                 },
                 style: FilledButton.styleFrom(backgroundColor: kAccent, foregroundColor: Colors.black),
                 child: Text(saving ? 'Creating…' : 'Create channel', style: const TextStyle(fontWeight: FontWeight.w800)),
@@ -4943,7 +4945,7 @@ class _FeedScreenState extends State<FeedScreen> with WidgetsBindingObserver {
               onPressed: () { Navigator.pop(context); _createChannel(); }, tooltip: 'New channel')]),
       body: _myChannels.isEmpty
           ? const Center(child: Padding(padding: EdgeInsets.all(32),
-              child: Text('No channels yet.\nCreate one to publish articles under a publication identity.',
+              child: Text('No channels yet.\nCreate one to publish posts and articles under a publication identity.',
                   textAlign: TextAlign.center, style: TextStyle(color: kDim, height: 1.6))))
           : ListView(children: [
               for (final name in _myChannels)
@@ -4952,7 +4954,11 @@ class _FeedScreenState extends State<FeedScreen> with WidgetsBindingObserver {
                       handle: _channelHandle(name), radius: 20),
                   title: Text(name, style: const TextStyle(color: kText, fontWeight: FontWeight.w700)),
                   subtitle: Text('@${_channelHandle(name)}', style: const TextStyle(color: kDim, fontSize: 12.5)),
-                  trailing: const Icon(Icons.chevron_right, color: kDim),
+                  trailing: IconButton(
+                    icon: const Icon(Icons.edit_outlined, color: kAccent),
+                    tooltip: 'Post to this channel',
+                    onPressed: () { Navigator.pop(context); _compose(channel: name); },
+                  ),
                   onTap: () => _openProfile(gWallet?.channelWallet(name).account ?? '', _channelHandle(name)),
                 ),
             ]),
@@ -7585,13 +7591,14 @@ class _FeedScreenState extends State<FeedScreen> with WidgetsBindingObserver {
     )));
   }
 
-  Future<void> _compose({Post? quotedPost, Post? replyToPost, String initialText = ''}) async {
+  Future<void> _compose({Post? quotedPost, Post? replyToPost, String initialText = '', String channel = ''}) async {
     final res = await showModalBottomSheet<ComposeResult>(
       context: context,
       isScrollControlled: true,
       backgroundColor: kBg,
       builder: (_) => ComposeSheet(handle: _handle, account: _account, quotedPost: quotedPost,
-          replyToPost: replyToPost, channels: _myChannels, people: _knownHandles(), initialText: initialText),
+          replyToPost: replyToPost, channels: _myChannels, people: _knownHandles(), initialText: initialText,
+          initialChannel: channel),
     );
     if (res == null || res.segments.isEmpty) return;
     // Build the compose intent. The head signs a node-assigned CID+seq that only exist after the node
@@ -7638,7 +7645,10 @@ class _FeedScreenState extends State<FeedScreen> with WidgetsBindingObserver {
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
           backgroundColor: kCard,
-          content: Text(res.pollOptions.isNotEmpty
+          // a channel post is kept out of Home (it lives on the channel), so say where it went
+          content: Text(res.channel.isNotEmpty
+              ? 'posted to ${res.channel} · find it on the channel’s page'
+              : res.pollOptions.isNotEmpty
                   ? '📊 poll posted · signed · 0 Nano blocks'
                   : res.title.isNotEmpty
                       ? '📄 published your article · signed · 0 Nano blocks'
@@ -13999,6 +14009,44 @@ class _CommentsSheetState extends State<CommentsSheet> {
 }
 
 // ---- compose ----
+// Relays cap one blob at 48 MB of BASE64 (XC_MAX_BLOB) ≈ 36 MB raw; 30 MB leaves headroom. Photos are
+// already resized to 1600 px on pick, so they keep the old small cap.
+const int kVideoCapMb = 30;
+const int kVideoCompressOverMb = 8;
+const int kPhotoCapMb = 6;
+
+/// A picked video, ready to post: (bytes, size). bytes is null when even the compressed clip is over
+/// kVideoCapMb (size then says by how much). Sizes are checked BEFORE anything is read into memory — a
+/// phone clip can be hundreds of MB, and reading the original only to throw it away is how a big pick
+/// runs the app out of memory. Clips over kVideoCompressOverMb are re-encoded to <=640 px (MediumQuality):
+/// measured ~21 MB per minute, so ~85 s fits the cap; smaller clips post as-is. (The "Unsupported value:
+/// 'kotlin.Unit'" error in the logs is the plugin's deleteAllCache replying twice — not compression —
+/// which is why the temp output is deleted here instead.)
+Future<(Uint8List?, int)> prepareVideo(XFile x, {void Function(bool on)? onCompressing}) async {
+  const cap = kVideoCapMb * 1024 * 1024;
+  int size = await x.length();
+  if (size > kVideoCompressOverMb * 1024 * 1024) {
+    File? out;
+    onCompressing?.call(true);
+    try {
+      final info = await VideoCompress.compressVideo(
+          x.path, quality: VideoQuality.MediumQuality, deleteOrigin: false, includeAudio: true);
+      out = info?.file;
+    } catch (_) {
+      // fall back to the original
+    } finally {
+      onCompressing?.call(false);
+    }
+    if (out != null) {
+      final n = await out.length();
+      final bytes = n > cap ? null : await out.readAsBytes();
+      out.delete().ignore();                               // in memory now (or rejected): drop the temp file
+      return (bytes, n);
+    }
+  }
+  return (size > cap ? null : await x.readAsBytes(), size);
+}
+
 // result of composing: one or more thread segments, an optional quoted post id, and an
 // optional article title (a titled post publishes as a long-form article)
 class ComposeResult {
@@ -14019,10 +14067,11 @@ class ComposeSheet extends StatefulWidget {
   final String handle, account;
   final Post? quotedPost; // when set, this is a quote-post embedding that post
   final Post? replyToPost; // when set, this post is a reply threaded under that post
-  final List<String> channels; // the author's channels — an article can be published under one
+  final List<String> channels; // the author's channels — any post (not a reply) can be published under one
   final Map<String, String> people; // account -> handle, for @-mention autocomplete (feed-seen accounts)
   final String initialText; // pre-seed the first body field (e.g. a game challenge callout)
-  const ComposeSheet({super.key, required this.handle, required this.account, this.quotedPost, this.replyToPost, this.channels = const [], this.people = const {}, this.initialText = ''});
+  final String initialChannel; // preselect "post as" this channel (opened from the channel's own row)
+  const ComposeSheet({super.key, required this.handle, required this.account, this.quotedPost, this.replyToPost, this.channels = const [], this.people = const {}, this.initialText = '', this.initialChannel = ''});
   @override
   State<ComposeSheet> createState() => _ComposeSheetState();
 }
@@ -14175,45 +14224,23 @@ class _ComposeSheetState extends State<ComposeSheet> {
         : await _picker.pickImage(source: ImageSource.gallery, imageQuality: 88, maxWidth: 1600);
     if (x == null) return;
 
-    Uint8List bytes;
-    if (video) {
-      // Only re-encode a clip that's ACTUALLY too big for the relay pin cap. The on-device compressor
-      // (video_compress) is a heavy native step that has thrown on some devices ("Unsupported value:
-      // 'kotlin.Unit'") — skipping it for already-small clips avoids that flaky failure and posts faster.
-      final raw = await x.readAsBytes();
-      const capMb = 6;
-      if (raw.length <= capMb * 1024 * 1024) {
-        bytes = raw;
-      } else {
-        setState(() => _compressing = true);
-        try {
-          final info = await VideoCompress.compressVideo(
-              x.path, quality: VideoQuality.MediumQuality, deleteOrigin: false, includeAudio: true);
-          final f = info?.file;
-          bytes = (f != null) ? await f.readAsBytes() : raw;   // fall back to the original on any failure
-        } catch (_) {
-          bytes = raw;
-        } finally {
-          if (mounted) setState(() => _compressing = false);
-        }
-      }
-    } else {
-      bytes = await x.readAsBytes();
-    }
-
-    // relay pin cap is ~6 MB — refuse larger so the blob actually survives the relays
-    const capMb = 6;
-    if (bytes.length > capMb * 1024 * 1024) {
-      final mb = (bytes.length / (1024 * 1024)).toStringAsFixed(1);
+    final capMb = video ? kVideoCapMb : kPhotoCapMb;
+    final (Uint8List? bytes, int size) = video
+        ? await prepareVideo(x, onCompressing: (on) { if (mounted) setState(() => _compressing = on); })
+        : await x.length().then((n) async => (n > capMb * 1024 * 1024 ? null : await x.readAsBytes(), n));
+    // refuse what the relays won't pin, so the blob actually survives them
+    if (bytes == null) {
+      final mb = (size / (1024 * 1024)).toStringAsFixed(1);
       final what = video ? 'Video' : 'Photo';
       final tip = video
-          ? 'Even compressed it’s over $capMb MB — try a shorter clip.'
+          ? 'Even compressed it’s over $capMb MB — try a clip under about a minute and a half.'
           : 'Try a smaller image.';
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(
           backgroundColor: kCard,
           content: Text('$what is $mb MB — the limit is $capMb MB. $tip')));
       return;
     }
+    if (!mounted) return;
     setState(() {
       if (video) {
         _mediaBytes = bytes;
@@ -14233,6 +14260,7 @@ class _ComposeSheetState extends State<ComposeSheet> {
       ProfileCache.I.ensure(acc);
     }
     if (widget.initialText.isNotEmpty) _cs[0].text = widget.initialText;
+    if (!_isReply && widget.channels.contains(widget.initialChannel)) _asChannel = widget.initialChannel;
   }
 
   @override
@@ -14240,7 +14268,6 @@ class _ComposeSheetState extends State<ComposeSheet> {
     for (final c in _cs) { c.dispose(); }
     for (final c in _pollOpts) { c.dispose(); }
     _titleCtl.dispose();
-    VideoCompress.deleteAllCache();   // compressed clips are already read into memory; drop the disk cache
     super.dispose();
   }
 
@@ -14249,7 +14276,7 @@ class _ComposeSheetState extends State<ComposeSheet> {
     if (_poll) {
       final opts = _pollOpts.map((c) => c.text.trim()).where((t) => t.isNotEmpty).toList();
       if (segs.isEmpty || opts.length < 2) return; // need a question + ≥2 options
-      Navigator.pop(context, ComposeResult([segs.first], '', pollOptions: opts));
+      Navigator.pop(context, ComposeResult([segs.first], '', pollOptions: opts, channel: _isReply ? '' : _asChannel));
       return;
     }
     // media may go with just an attachment (no text required)
@@ -14260,7 +14287,7 @@ class _ComposeSheetState extends State<ComposeSheet> {
         _isQuote ? widget.quotedPost!.id : '',
         title: _article ? _titleCtl.text.trim() : '',
         mediaBytes: _mediaBytes, mediaKind: _mediaKind, photos: List.of(_photos),
-        channel: _article ? _asChannel : ''));   // articles can be published under a channel
+        channel: _isReply ? '' : _asChannel));   // posts, threads, polls and articles can go out under a channel
   }
 
   @override
@@ -14304,27 +14331,6 @@ class _ComposeSheetState extends State<ComposeSheet> {
                 tooltip: 'Cover image',
               ),
             const Spacer(),
-            if (_article && widget.channels.isNotEmpty)
-              PopupMenuButton<String>(
-                initialValue: _asChannel,
-                onSelected: (v) => setState(() => _asChannel = v),
-                color: kCard,
-                itemBuilder: (_) => [
-                  const PopupMenuItem<String>(value: '', child: Text('You', style: TextStyle(color: kText))),
-                  for (final c in widget.channels)
-                    PopupMenuItem<String>(value: c, child: Text(c, style: const TextStyle(color: kText))),
-                ],
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 4),
-                  child: Row(mainAxisSize: MainAxisSize.min, children: [
-                    const Icon(Icons.person_outline, size: 15, color: kAccent),
-                    const SizedBox(width: 3),
-                    Text(_asChannel.isEmpty ? 'You' : _asChannel,
-                        style: const TextStyle(color: kAccent, fontSize: 12.5, fontWeight: FontWeight.w600)),
-                    const Icon(Icons.arrow_drop_down, size: 16, color: kAccent),
-                  ]),
-                ),
-              ),
             if (!_isQuote && !_isThread && !_poll)
               // toggle long-form article mode (adds a title)
               IconButton(
@@ -14358,6 +14364,39 @@ class _ComposeSheetState extends State<ComposeSheet> {
             ),
           ]),
           const SizedBox(height: 8),
+          // "Posting as": you or one of your channels. Its own line — the toolbar above is full on a phone.
+          // Channel posts are signed by the channel's key and live on the channel (not in your Home feed).
+          if (!_isReply && widget.channels.isNotEmpty)
+            Align(
+              alignment: Alignment.centerLeft,
+              child: PopupMenuButton<String>(
+                initialValue: _asChannel,
+                onSelected: (v) => setState(() => _asChannel = v),
+                color: kCard,
+                tooltip: 'Post as',
+                itemBuilder: (_) => [
+                  const PopupMenuItem<String>(value: '', child: Text('You', style: TextStyle(color: kText))),
+                  for (final c in widget.channels)
+                    PopupMenuItem<String>(value: c, child: Text(c, style: const TextStyle(color: kText))),
+                ],
+                child: Container(
+                  margin: const EdgeInsets.only(bottom: 8),
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                  decoration: BoxDecoration(
+                      border: Border.all(color: _asChannel.isEmpty ? kLine : kAccent),
+                      borderRadius: BorderRadius.circular(16)),
+                  child: Row(mainAxisSize: MainAxisSize.min, children: [
+                    Icon(_asChannel.isEmpty ? Icons.person_outline : Icons.dynamic_feed_outlined,
+                        size: 15, color: kAccent),
+                    const SizedBox(width: 5),
+                    Flexible(child: Text(_asChannel.isEmpty ? 'Posting as you' : 'Posting to $_asChannel',
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(color: kAccent, fontSize: 12.5, fontWeight: FontWeight.w600))),
+                    const Icon(Icons.arrow_drop_down, size: 16, color: kAccent),
+                  ]),
+                ),
+              ),
+            ),
           Flexible(
             child: SingleChildScrollView(
               child: Column(mainAxisSize: MainAxisSize.min, children: [
