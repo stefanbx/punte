@@ -4087,6 +4087,36 @@ class _FeedScreenState extends State<FeedScreen> with WidgetsBindingObserver {
     if (mounted && !setEquals(next, _channelAccounts)) {
       setState(() => _channelAccounts = next);
     }
+    await _recoverMyChannels(chs);
+  }
+
+  // account -> channel name, for the channels this seed owns. Lets a channel's own page (and its row in
+  // the Channels tab) offer "Post" instead of Follow/Message.
+  Map<String, String> _myChannelAcct = {};
+  void _indexMyChannels() {
+    final w = gWallet;
+    if (w == null) return;
+    setState(() => _myChannelAcct = {for (final n in _myChannels) w.channelWallet(n).account: n});
+  }
+
+  // _myChannels lives in this phone's prefs, so after a reinstall or on a second device your channels
+  // existed but the app didn't know they were yours, and there was no way to post to them. A channel's
+  // key is derived from the seed + its name, so any directory channel whose name re-derives to its
+  // account is provably ours: add it back.
+  Future<void> _recoverMyChannels(List<Map<String, dynamic>> chs) async {
+    final w = gWallet;
+    if (w == null || !mounted) return;
+    var added = false;
+    for (final c in chs) {
+      final name = '${c['display'] ?? ''}'.trim();
+      if (name.isEmpty || _myChannels.contains(name)) continue;
+      if (w.channelWallet(name).account == '${c['account']}') {
+        _myChannels.add(name);
+        added = true;
+      }
+    }
+    if (added) await _saveChannels();
+    if (mounted) _indexMyChannels();
   }
 
   // A settled-tips history sheet: one card per settlement, each split leg with its amount, a ✓/✗ for
@@ -4839,7 +4869,9 @@ class _FeedScreenState extends State<FeedScreen> with WidgetsBindingObserver {
   List<String> _myChannels = [];
   Future<void> _loadChannels() async {
     final p = await SharedPreferences.getInstance();
-    if (mounted) setState(() => _myChannels = p.getStringList('xchat_channels') ?? []);
+    // merge, don't replace: _recoverMyChannels may already have added some from the directory
+    if (mounted) setState(() => _myChannels = {...(p.getStringList('xchat_channels') ?? []), ..._myChannels}.toList());
+    if (mounted) _indexMyChannels();
   }
   Future<void> _saveChannels() async {
     final p = await SharedPreferences.getInstance();
@@ -4920,6 +4952,7 @@ class _FeedScreenState extends State<FeedScreen> with WidgetsBindingObserver {
                   ProfileCache.I.put(ch.account, {'display': name, 'bio': descCtl.text.trim(), 'avatar': avatarCid});
                   setState(() => _myChannels.add(name));
                   await _saveChannels();
+                  _indexMyChannels();
                   if (!_follows.contains(ch.account)) { _follows.add(ch.account); _publishFollows(); }
                   if (!mounted) return;
                   Navigator.pop(ctx);
@@ -4978,6 +5011,9 @@ class _FeedScreenState extends State<FeedScreen> with WidgetsBindingObserver {
       onToggleFollow: () => _toggleFollow(account),
       onEdit: _showEditProfile,
       onMessage: () => _openChat(account, handle),
+      onPost: _myChannelAcct.containsKey(account)
+          ? () => _compose(channel: _myChannelAcct[account]!)
+          : null,
     )));
   }
 
@@ -6204,7 +6240,7 @@ class _FeedScreenState extends State<FeedScreen> with WidgetsBindingObserver {
               contentPadding: EdgeInsets.zero,
               leading: const Icon(Icons.dashboard_customize_outlined, color: kText, size: 20),
               title: const Text('Channels', style: TextStyle(color: kText, fontWeight: FontWeight.w700, fontSize: 15)),
-              subtitle: const Text('your publications · long-form articles', style: TextStyle(color: kDim, fontSize: 12)),
+              subtitle: const Text('your publications · posts and articles', style: TextStyle(color: kDim, fontSize: 12)),
               trailing: Text('${_myChannels.length}', style: const TextStyle(color: kDim, fontSize: 13)),
               onTap: () { Navigator.pop(ctx); _openChannels(); },
             ),
@@ -7877,7 +7913,8 @@ class _FeedScreenState extends State<FeedScreen> with WidgetsBindingObserver {
                       onOpenProfile: _openProfile,
                       cardBuilder: _profileCard)
                   : _tab == 1
-                      ? ChannelsScreen(onOpenChannel: _openProfile)
+                      ? ChannelsScreen(onOpenChannel: _openProfile, mine: _myChannelAcct,
+                          onPost: (name) => _compose(channel: name), onCreate: _createChannel)
                       : _homeBody(),
     );
   }
@@ -10072,6 +10109,7 @@ class ProfileScreen extends StatefulWidget {
   final VoidCallback? onEdit;
   final VoidCallback? onToggleFollow;
   final VoidCallback? onMessage;
+  final VoidCallback? onPost;   // set on YOUR channel's page: post to it (instead of Message/Follow)
   const ProfileScreen({
     super.key,
     required this.account,
@@ -10083,6 +10121,7 @@ class ProfileScreen extends StatefulWidget {
     this.onEdit,
     this.onToggleFollow,
     this.onMessage,
+    this.onPost,
   });
   @override
   State<ProfileScreen> createState() => _ProfileScreenState();
@@ -10176,6 +10215,13 @@ class _ProfileScreenState extends State<ProfileScreen> {
                               style: OutlinedButton.styleFrom(foregroundColor: kText, side: const BorderSide(color: kLine),
                                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20))),
                               child: const Text('Edit profile', style: TextStyle(fontWeight: FontWeight.w700)))
+                        else if (widget.onPost != null)
+                          FilledButton.icon(
+                              onPressed: widget.onPost,
+                              icon: const Icon(Icons.edit_outlined, size: 17),
+                              label: const Text('Post', style: TextStyle(fontWeight: FontWeight.w800)),
+                              style: FilledButton.styleFrom(backgroundColor: kAccent, foregroundColor: Colors.black,
+                                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20))))
                         else ...[
                           OutlinedButton(
                             onPressed: widget.onMessage,
@@ -10296,7 +10342,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
 // the channel's profile, where its posts + articles live (they're kept out of the personal feed).
 class ChannelsScreen extends StatefulWidget {
   final void Function(String account, String handle) onOpenChannel;
-  const ChannelsScreen({super.key, required this.onOpenChannel});
+  final Map<String, String> mine;               // account -> name of the channels you own
+  final void Function(String name)? onPost;     // post to one of yours
+  final VoidCallback? onCreate;                 // anyone can start a channel, right from this tab
+  const ChannelsScreen({super.key, required this.onOpenChannel, this.mine = const {}, this.onPost, this.onCreate});
   @override
   State<ChannelsScreen> createState() => _ChannelsScreenState();
 }
@@ -10306,8 +10355,15 @@ class _ChannelsScreenState extends State<ChannelsScreen> {
   bool _loading = true;
   @override
   void initState() { super.initState(); _load(); }
+  @override
+  void didUpdateWidget(ChannelsScreen old) {
+    super.didUpdateWidget(old);
+    if (old.mine.length != widget.mine.length) _load();   // you just created one: show it
+  }
   Future<void> _load() async {
-    final c = await Api.channels();
+    // copy: on a failed fetch Api.channels() returns a const (unmodifiable) list, and sorting that threw,
+    // which left this tab spinning forever whenever the node was unreachable
+    final c = [...await Api.channels()];
     c.sort((a, b) {                                            // most readers first, then most online
       final fa = (a['followers'] as num?)?.toInt() ?? 0, fb = (b['followers'] as num?)?.toInt() ?? 0;
       if (fa != fb) return fb - fa;
@@ -10322,7 +10378,16 @@ class _ChannelsScreenState extends State<ChannelsScreen> {
         padding: const EdgeInsets.fromLTRB(16, 14, 16, 12),
         alignment: Alignment.centerLeft,
         decoration: const BoxDecoration(border: Border(bottom: BorderSide(color: kLine))),
-        child: const Text('Channels', style: TextStyle(color: kText, fontWeight: FontWeight.w800, fontSize: 20)),
+        child: Row(children: [
+          const Text('Channels', style: TextStyle(color: kText, fontWeight: FontWeight.w800, fontSize: 20)),
+          const Spacer(),
+          if (widget.onCreate != null)
+            TextButton.icon(
+              onPressed: widget.onCreate,
+              icon: const Icon(Icons.add, size: 18, color: kAccent),
+              label: const Text('New channel', style: TextStyle(color: kAccent, fontWeight: FontWeight.w700)),
+            ),
+        ]),
       ),
       Expanded(
         child: RefreshIndicator(
@@ -10332,7 +10397,7 @@ class _ChannelsScreenState extends State<ChannelsScreen> {
               : _chs.isEmpty
                   ? ListView(children: const [
                       Padding(padding: EdgeInsets.fromLTRB(28, 70, 28, 0), child: Text(
-                          'No channels yet.\n\nChannels are publications you can follow — their posts and articles show here, not in your feed.',
+                          'No channels yet.\n\nChannels are publications you can follow — their posts and articles show here, not in your feed. Tap “New channel” to start your own.',
                           textAlign: TextAlign.center, style: TextStyle(color: kDim, fontSize: 13.5, height: 1.6)))])
                   : ListView.separated(
                       itemCount: _chs.length,
@@ -10352,7 +10417,14 @@ class _ChannelsScreenState extends State<ChannelsScreen> {
                               style: const TextStyle(color: kText, fontWeight: FontWeight.w800, fontSize: 15)),
                           subtitle: bio.isEmpty ? null : Text(bio, maxLines: 2, overflow: TextOverflow.ellipsis,
                               style: const TextStyle(color: kDim, fontSize: 12.5)),
-                          trailing: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.end, children: [
+                          trailing: Row(mainAxisSize: MainAxisSize.min, children: [
+                           if (widget.mine.containsKey(acc) && widget.onPost != null)
+                            IconButton(
+                              icon: const Icon(Icons.edit_outlined, color: kAccent),
+                              tooltip: 'Post to this channel',
+                              onPressed: () => widget.onPost!(widget.mine[acc]!),
+                            ),
+                           Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.end, children: [
                             Row(mainAxisSize: MainAxisSize.min, children: [
                               Container(width: 7, height: 7, decoration: BoxDecoration(
                                   color: online > 0 ? const Color(0xFF3BD671) : kDim, shape: BoxShape.circle)),
@@ -10363,6 +10435,7 @@ class _ChannelsScreenState extends State<ChannelsScreen> {
                             const SizedBox(height: 3),
                             Text('$readers reader${readers == 1 ? '' : 's'}',
                                 style: const TextStyle(color: kDim, fontSize: 11)),
+                           ]),
                           ]),
                         );
                       },

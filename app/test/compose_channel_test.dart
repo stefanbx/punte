@@ -25,6 +25,8 @@ Future<ComposeResult?> _open(WidgetTester t, Widget sheet, Future<void> Function
 }
 
 void main() {
+  profileTests();
+  channelsTabTests();
   testWidgets('a plain post can be sent to a channel', (t) async {
     final res = await _open(t,
         const ComposeSheet(handle: 'me', account: 'nano_me', channels: ['Daily News']), () async {
@@ -60,5 +62,41 @@ void main() {
       await t.tap(find.text('Post'));
     });
     expect(res!.channel, '');
+  });
+}
+
+// Your own channel's page used to show Message + Follow like anyone else's, with no way to post to it.
+void profileTests() {
+  testWidgets("your channel's page shows Post (not Follow) and it opens the composer", (t) async {
+    var posted = 0;
+    await t.pumpWidget(MaterialApp(home: ProfileScreen(
+        account: 'nano_chan', handle: 'Daily News', isMe: false, allPosts: const [],
+        cardBuilder: (_) => const SizedBox(), onPost: () => posted++)));
+    await t.pump();
+    expect(find.text('Post'), findsOneWidget);
+    expect(find.text('Follow'), findsNothing);
+    await t.tap(find.text('Post'));
+    expect(posted, 1);
+  });
+
+  testWidgets("someone else's channel still shows Follow, no Post", (t) async {
+    await t.pumpWidget(MaterialApp(home: ProfileScreen(
+        account: 'nano_other', handle: 'Tao', isMe: false, allPosts: const [],
+        cardBuilder: (_) => const SizedBox())));
+    await t.pump();
+    expect(find.text('Follow'), findsOneWidget);
+    expect(find.text('Post'), findsNothing);
+  });
+}
+
+// Anyone can start a channel from the Channels tab (it used to be only deep in the menu).
+void channelsTabTests() {
+  testWidgets('Channels tab offers New channel to everyone', (t) async {
+    var created = 0;
+    await t.pumpWidget(MaterialApp(home: Scaffold(body: ChannelsScreen(
+        onOpenChannel: (_, __) {}, onCreate: () => created++))));
+    await t.pump();
+    await t.tap(find.text('New channel'));
+    expect(created, 1);
   });
 }
